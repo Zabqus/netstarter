@@ -51,3 +51,10 @@ target_link_libraries(tcp_server PRIVATE netcommon)
 
 add_executable(tcp_client tcp/tcp_client.c)
 target_link_libraries(tcp_client PRIVATE netcommon)
+
+# UDP (3.0 / 3.5)
+add_executable(udp_server udp/udp_server.c)
+target_link_libraries(udp_server PRIVATE netcommon)
+
+add_executable(udp_client udp/udp_client.c)
+target_link_libraries(udp_client PRIVATE netcommon)

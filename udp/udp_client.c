@@ -1,0 +1,155 @@
+/*
+ * udp_client.c – klient echo UDP z timeoutem odpowiedzi.
+ *
+ * Uruchomienie:
+ *   ./build/udp_client -h <host> [-p <port>] [-m "wiadomość"]   (domyślnie port 5001)
+ *
+ *   bez -m : każda linia ze stdin to osobny datagram (Ctrl+D kończy),
+ *   z -m   : wysyła jeden datagram, czeka na odpowiedź i kończy
+ *            (kod wyjścia 1, gdy odpowiedź nie przyszła).
+ *
+ * Test bez serwera:  nc -u -l 5001
+ *
+ * Sekwencja wywołań:
+ *   getaddrinfo → socket → setsockopt(SO_RCVTIMEO) → sendto / recvfrom (pętla) → close
+ *
+ * UDP nie potwierdza dostarczenia. Gdy datagram lub odpowiedź zginie (np. zablokuje
+ * je firewall), recvfrom() czekałby w nieskończoność – dlatego ustawiamy timeout
+ * i wypisujemy "brak odpowiedzi (timeout)".
+ */
+#include <errno.h>       /* errno, EAGAIN, EWOULDBLOCK */
+#include <netdb.h>       /* getaddrinfo, freeaddrinfo, gai_strerror */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>      /* memset, strcmp, strlen */
+#include <unistd.h>      /* close */
+#include <sys/socket.h>  /* socket, setsockopt, sendto, recvfrom */
+#include <sys/time.h>    /* struct timeval */
+
+#include "net_common.h"
+
+#define DEFAULT_PORT    "5001"
+#define BUF_SIZE        1500
+#define TIMEOUT_SECONDS 2
+
+static void usage(const char *prog)
+{
+    fprintf(stderr, "Użycie: %s -h <host> [-p <port>] [-m \"wiadomość\"]\n"
+                    "  -h <host>  adres lub nazwa serwera\n"
+                    "  -p <port>  port serwera (domyślnie " DEFAULT_PORT ")\n"
+                    "  -m <tekst> wyślij jedną wiadomość i zakończ\n", prog);
+    exit(EXIT_FAILURE);
+}
+
+/*
+ * Wysyła jeden datagram do serwera i czeka na odpowiedź.
+ * Zwraca 0 – odpowiedź przyszła, -1 – timeout lub błąd.
+ */
+static int echo_once(int fd, const struct addrinfo *server, const char *text, size_t len)
+{
+    /*
+     * sendto(): wysyła datagram pod podany adres. Bez wcześniejszego bind() jądro
+     * przy pierwszym sendto() samo przydziela gniazdu wolny port źródłowy.
+     * Sukces oznacza tylko, że datagram wyszedł z naszej maszyny – nie że dotarł.
+     */
+    if (sendto(fd, text, len, 0, server->ai_addr, server->ai_addrlen) < 0) {
+        perror("sendto");
+        return -1;
+    }
+
+    char reply[BUF_SIZE];
+    struct sockaddr_storage from;
+    socklen_t from_len = sizeof from;
+
+    /*
+     * recvfrom(): czeka na odpowiedź maksymalnie TIMEOUT_SECONDS (SO_RCVTIMEO).
+     * Po upływie czasu zwraca -1 z errno = EAGAIN / EWOULDBLOCK.
+     */
+    ssize_t n = recvfrom(fd, reply, sizeof reply, 0, (struct sockaddr *)&from, &from_len);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            printf("[UDP][cli] brak odpowiedzi (timeout %d s)\n", TIMEOUT_SECONDS);
+        else
+            perror("recvfrom");
+        return -1;
+    }
+
+    char addr[ADDR_STR_LEN];
+    printf("[UDP][cli] odpowiedź (%zd B) od %s: \"%.*s\"\n",
+           n, addr_to_str((struct sockaddr *)&from, from_len, addr, sizeof addr),
+           (int)text_len(reply, (size_t)n), reply);
+    return 0;
+}
+
+int main(int argc, char *argv[])
+{
+    const char *host = NULL;
+    const char *port = DEFAULT_PORT;
+    const char *message = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0 && i + 1 < argc)
+            host = argv[++i];
+        else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc)
+            port = argv[++i];
+        else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc)
+            message = argv[++i];
+        else
+            usage(argv[0]);
+    }
+    if (host == NULL)
+        usage(argv[0]);
+
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
+    struct addrinfo hints;
+    struct addrinfo *res;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;                /* IPv4 */
+    hints.ai_socktype = SOCK_DGRAM;           /* UDP */
+    hints.ai_flags = AI_NUMERICSERV;
+
+    int rc = getaddrinfo(host, port, &hints, &res);
+    if (rc != 0) {
+        fprintf(stderr, "getaddrinfo(%s): %s\n", host, gai_strerror(rc));
+        return EXIT_FAILURE;
+    }
+    /*
+     * Bierzemy pierwszy adres z listy. W UDP nie ma połączenia, więc nie da się
+     * "sprawdzić" adresu jak connect() w TCP – nie wiadomo, czy ktoś tam słucha.
+     */
+
+    /* socket(): gniazdo datagramowe tej samej rodziny co adres serwera. */
+    int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (fd < 0)
+        die("socket");
+
+    /* SO_RCVTIMEO: maksymalny czas blokowania recvfrom(). */
+    struct timeval tv = { .tv_sec = TIMEOUT_SECONDS, .tv_usec = 0 };
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) < 0)
+        die("setsockopt(SO_RCVTIMEO)");
+
+    char addr[ADDR_STR_LEN];
+    printf("[UDP][cli] serwer: %s\n", addr_to_str(res->ai_addr, res->ai_addrlen, addr, sizeof addr));
+
+    char line[BUF_SIZE];
+    int status = 0;
+
+    if (message != NULL) {
+        /* Dokładamy '\n', żeby np. nc -u -l wypisał wiadomość w osobnej linii. */
+        int len = snprintf(line, sizeof line, "%s\n", message);
+        if (len >= (int)sizeof line)
+            len = (int)sizeof line - 1;   /* za długa wiadomość – obcinamy */
+        if (echo_once(fd, res, line, (size_t)len) != 0)
+            status = 1;
+    } else {
+        /* Po timeoucie nie kończymy – można wysłać kolejną linię. */
+        printf("[UDP][cli] wpisuj linie, Ctrl+D kończy\n");
+        while (fgets(line, sizeof line, stdin) != NULL)
+            echo_once(fd, res, line, strlen(line));
+    }
+
+    freeaddrinfo(res);
+    close(fd);   /* UDP nie ma połączenia do zamknięcia – zwalniamy tylko gniazdo i port */
+    return status;
+}
