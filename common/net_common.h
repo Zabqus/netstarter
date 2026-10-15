@@ -54,4 +54,10 @@ uint16_t inet_checksum(const void *data, size_t len);
  */
 int parse_family(const char *flag);
 
+/*
+ * Zwraca długość tekstu w buf (n bajtów) bez końcowych znaków '\n' i '\r'.
+ * Tylko do ładnego logowania: printf("%.*s", (int)text_len(buf, n), buf).
+ */
+size_t text_len(const char *buf, size_t n);
+
 #endif /* NET_COMMON_H */

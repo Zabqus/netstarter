@@ -1,0 +1,184 @@
+/*
+ * tcp_client.c – klient echo TCP.
+ *
+ * Uruchomienie:
+ *   ./build/tcp_client -h <host> [-p <port>] [-m "wiadomość"]   (domyślnie port 5000)
+ *
+ *   bez -m : czyta linie ze stdin i wysyła je po kolei (Ctrl+D kończy),
+ *   z -m   : wysyła jedną wiadomość, wypisuje odpowiedź i kończy.
+ *
+ * Test bez serwera:  nc -l 5000   (na drugim terminalu widać, co przyszło)
+ *
+ * Sekwencja wywołań:
+ *   getaddrinfo → socket → connect → send_all / recv (pętla) → close
+ *
+ * Klient nie robi bind(): jądro przy connect() samo dobiera adres źródłowy
+ * (wg tablicy routingu) i wolny port efemeryczny.
+ */
+#include <netdb.h>       /* getaddrinfo, freeaddrinfo, gai_strerror */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>      /* memset, strcmp, strlen */
+#include <unistd.h>      /* close */
+#include <sys/socket.h>  /* socket, connect, recv */
+
+#include "net_common.h"
+
+#define DEFAULT_PORT "5000"
+#define BUF_SIZE     1024
+
+static void usage(const char *prog)
+{
+    fprintf(stderr, "Użycie: %s -h <host> [-p <port>] [-m \"wiadomość\"]\n"
+                    "  -h <host>  adres lub nazwa serwera\n"
+                    "  -p <port>  port serwera (domyślnie " DEFAULT_PORT ")\n"
+                    "  -m <tekst> wyślij jedną wiadomość i zakończ\n", prog);
+    exit(EXIT_FAILURE);
+}
+
+/* Łączy się z host:port. Zwraca deskryptor połączonego gniazda. */
+static int connect_to(const char *host, const char *port)
+{
+    struct addrinfo hints;
+    struct addrinfo *res;
+
+    /*
+     * getaddrinfo() zamienia nazwę/adres i port na gotowe struktury adresów.
+     * Może zwrócić kilka adresów (np. nazwa z wieloma rekordami w DNS),
+     * dlatego niżej próbujemy po kolei, aż któryś connect() się uda.
+     */
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;                /* IPv4 */
+    hints.ai_socktype = SOCK_STREAM;          /* TCP */
+    hints.ai_flags = AI_NUMERICSERV;
+
+    int rc = getaddrinfo(host, port, &hints, &res);
+    if (rc != 0) {
+        fprintf(stderr, "getaddrinfo(%s): %s\n", host, gai_strerror(rc));
+        exit(EXIT_FAILURE);
+    }
+
+    int fd = -1;
+    char addr[ADDR_STR_LEN];
+    for (struct addrinfo *ai = res; ai != NULL; ai = ai->ai_next) {
+        addr_to_str(ai->ai_addr, ai->ai_addrlen, addr, sizeof addr);
+
+        /* socket(): nowe gniazdo TCP tej samej rodziny co adres docelowy. */
+        fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd < 0) {
+            perror("socket");
+            continue;
+        }
+
+        /*
+         * connect(): nawiązuje połączenie (three-way handshake SYN, SYN-ACK, ACK).
+         * Typowe błędy: "Connection refused" (nikt nie słucha na porcie – przyszedł RST),
+         * "Connection timed out" (brak odpowiedzi, np. pakiety gubi firewall).
+         */
+        if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) {
+            printf("[TCP][cli] połączono z %s\n", addr);
+            break;
+        }
+        fprintf(stderr, "[TCP][cli] %s: ", addr);
+        perror("connect");
+        close(fd);
+        fd = -1;
+    }
+    freeaddrinfo(res);
+
+    if (fd < 0) {
+        fprintf(stderr, "[TCP][cli] nie udało się połączyć z %s:%s\n", host, port);
+        exit(EXIT_FAILURE);
+    }
+    return fd;
+}
+
+/*
+ * Odbiera dokładnie len bajtów. Serwer echo odsyła tyle bajtów, ile wysłaliśmy,
+ * ale TCP to strumień – odpowiedź może przyjść w kilku kawałkach, więc
+ * wywołujemy recv() w pętli, aż zbierzemy całość.
+ * Zwraca 0 – OK, 1 – serwer zamknął połączenie, -1 – błąd.
+ */
+static int recv_exact(int fd, char *buf, size_t len)
+{
+    size_t got = 0;
+    while (got < len) {
+        ssize_t n = recv(fd, buf + got, len - got, 0);
+        if (n < 0) {
+            perror("recv");
+            return -1;
+        }
+        if (n == 0)   /* 0 = druga strona zamknęła połączenie */
+            return 1;
+        got += (size_t)n;
+    }
+    return 0;
+}
+
+/* Wysyła jedną porcję tekstu i wypisuje echo. Zwraca 0 – OK, inna wartość – koniec. */
+static int echo_once(int fd, const char *text, size_t len)
+{
+    char reply[BUF_SIZE];
+
+    if (send_all(fd, text, len) < 0) {
+        perror("send");
+        return -1;
+    }
+
+    int rc = recv_exact(fd, reply, len);
+    if (rc == 1)
+        printf("[TCP][cli] serwer zamknął połączenie\n");
+    if (rc != 0)
+        return rc;
+
+    printf("[TCP][cli] odpowiedź (%zu B): \"%.*s\"\n",
+           len, (int)text_len(reply, len), reply);
+    return 0;
+}
+
+int main(int argc, char *argv[])
+{
+    const char *host = NULL;
+    const char *port = DEFAULT_PORT;
+    const char *message = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0 && i + 1 < argc)
+            host = argv[++i];
+        else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc)
+            port = argv[++i];
+        else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc)
+            message = argv[++i];
+        else
+            usage(argv[0]);
+    }
+    if (host == NULL)
+        usage(argv[0]);
+
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
+    int fd = connect_to(host, port);
+    char line[BUF_SIZE];
+
+    if (message != NULL) {
+        /* Tryb jednej wiadomości. Dokładamy '\n', żeby np. nc wypisał ją w osobnej linii. */
+        int len = snprintf(line, sizeof line, "%s\n", message);
+        if (len >= (int)sizeof line)
+            len = (int)sizeof line - 1;   /* za długa wiadomość – obcinamy */
+        echo_once(fd, line, (size_t)len);
+    } else {
+        /* Tryb interaktywny: fgets() zwraca NULL po Ctrl+D (koniec stdin). */
+        printf("[TCP][cli] wpisuj linie, Ctrl+D kończy\n");
+        while (fgets(line, sizeof line, stdin) != NULL) {
+            if (echo_once(fd, line, strlen(line)) != 0)
+                break;
+        }
+    }
+
+    /*
+     * close(): zamyka połączenie (jądro wysyła FIN) – serwer dostanie recv() == 0.
+     * Po Ctrl+C bez obsługi sygnału jądro i tak zamknie gniazdo przy końcu procesu.
+     */
+    close(fd);
+    return 0;
+}

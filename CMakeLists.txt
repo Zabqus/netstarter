@@ -44,3 +44,10 @@ target_include_directories(netcommon PUBLIC common)
 # Programy – po jednym add_executable na program, każdy linkowany z netcommon.
 # Dopisywane w kolejnych etapach.
 # ---------------------------------------------------------------------------
+
+# TCP (3.0 / 3.5)
+add_executable(tcp_server tcp/tcp_server.c)
+target_link_libraries(tcp_server PRIVATE netcommon)
+
+add_executable(tcp_client tcp/tcp_client.c)
+target_link_libraries(tcp_client PRIVATE netcommon)

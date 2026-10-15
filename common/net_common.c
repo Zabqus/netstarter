@@ -106,3 +106,10 @@ int parse_family(const char *flag)
         return AF_INET6;
     return -1;
 }
+
+size_t text_len(const char *buf, size_t n)
+{
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+        n--;
+    return n;
+}
