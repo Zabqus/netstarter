@@ -2,11 +2,15 @@
  * udp_client.c – klient echo UDP z timeoutem odpowiedzi.
  *
  * Uruchomienie:
- *   ./build/udp_client -h <host> [-p <port>] [-m "wiadomość"]   (domyślnie port 5001)
+ *   ./build/udp_client [-4|-6] -h <host> [-p <port>] [-m "wiadomość"]   (domyślnie port 5001)
  *
- *   bez -m : każda linia ze stdin to osobny datagram (Ctrl+D kończy),
- *   z -m   : wysyła jeden datagram, czeka na odpowiedź i kończy
- *            (kod wyjścia 1, gdy odpowiedź nie przyszła).
+ *   bez -4/-6 : dowolna wersja IP (AF_UNSPEC) – używamy pierwszego adresu hosta,
+ *   -4 / -6   : wymuszenie IPv4 / IPv6 (np. dla nazwy "localhost", która ma oba),
+ *   bez -m    : każda linia ze stdin to osobny datagram (Ctrl+D kończy),
+ *   z -m      : wysyła jeden datagram, czeka na odpowiedź i kończy
+ *               (kod wyjścia 1, gdy odpowiedź nie przyszła).
+ *
+ * Przykłady:  -h 192.168.1.201   -h fd00:10::201   -h ::1   -h localhost -6
  *
  * Test bez serwera:  nc -u -l 5001
  *
@@ -34,7 +38,8 @@
 
 static void usage(const char *prog)
 {
-    fprintf(stderr, "Użycie: %s -h <host> [-p <port>] [-m \"wiadomość\"]\n"
+    fprintf(stderr, "Użycie: %s [-4|-6] -h <host> [-p <port>] [-m \"wiadomość\"]\n"
+                    "  -4 / -6    wymuś IPv4 / IPv6 (domyślnie: dowolna)\n"
                     "  -h <host>  adres lub nazwa serwera\n"
                     "  -p <port>  port serwera (domyślnie " DEFAULT_PORT ")\n"
                     "  -m <tekst> wyślij jedną wiadomość i zakończ\n", prog);
@@ -86,9 +91,13 @@ int main(int argc, char *argv[])
     const char *host = NULL;
     const char *port = DEFAULT_PORT;
     const char *message = NULL;
+    int family = AF_UNSPEC;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-h") == 0 && i + 1 < argc)
+        int f = parse_family(argv[i]);
+        if (f != -1)
+            family = f;
+        else if (strcmp(argv[i], "-h") == 0 && i + 1 < argc)
             host = argv[++i];
         else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc)
             port = argv[++i];
@@ -105,7 +114,7 @@ int main(int argc, char *argv[])
     struct addrinfo hints;
     struct addrinfo *res;
     memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_INET;                /* IPv4 */
+    hints.ai_family = family;                 /* AF_UNSPEC = obie rodziny */
     hints.ai_socktype = SOCK_DGRAM;           /* UDP */
     hints.ai_flags = AI_NUMERICSERV;
 

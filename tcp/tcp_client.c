@@ -2,10 +2,14 @@
  * tcp_client.c – klient echo TCP.
  *
  * Uruchomienie:
- *   ./build/tcp_client -h <host> [-p <port>] [-m "wiadomość"]   (domyślnie port 5000)
+ *   ./build/tcp_client [-4|-6] -h <host> [-p <port>] [-m "wiadomość"]   (domyślnie port 5000)
  *
- *   bez -m : czyta linie ze stdin i wysyła je po kolei (Ctrl+D kończy),
- *   z -m   : wysyła jedną wiadomość, wypisuje odpowiedź i kończy.
+ *   bez -4/-6 : dowolna wersja IP (AF_UNSPEC) – próbujemy kolejnych adresów hosta,
+ *   -4 / -6   : wymuszenie IPv4 / IPv6 (np. dla nazwy "localhost", która ma oba),
+ *   bez -m    : czyta linie ze stdin i wysyła je po kolei (Ctrl+D kończy),
+ *   z -m      : wysyła jedną wiadomość, wypisuje odpowiedź i kończy.
+ *
+ * Przykłady:  -h 192.168.1.201   -h fd00:10::201   -h ::1   -h localhost -6
  *
  * Test bez serwera:  nc -l 5000   (na drugim terminalu widać, co przyszło)
  *
@@ -29,7 +33,8 @@
 
 static void usage(const char *prog)
 {
-    fprintf(stderr, "Użycie: %s -h <host> [-p <port>] [-m \"wiadomość\"]\n"
+    fprintf(stderr, "Użycie: %s [-4|-6] -h <host> [-p <port>] [-m \"wiadomość\"]\n"
+                    "  -4 / -6    wymuś IPv4 / IPv6 (domyślnie: dowolna)\n"
                     "  -h <host>  adres lub nazwa serwera\n"
                     "  -p <port>  port serwera (domyślnie " DEFAULT_PORT ")\n"
                     "  -m <tekst> wyślij jedną wiadomość i zakończ\n", prog);
@@ -37,18 +42,19 @@ static void usage(const char *prog)
 }
 
 /* Łączy się z host:port. Zwraca deskryptor połączonego gniazda. */
-static int connect_to(const char *host, const char *port)
+static int connect_to(int family, const char *host, const char *port)
 {
     struct addrinfo hints;
     struct addrinfo *res;
 
     /*
      * getaddrinfo() zamienia nazwę/adres i port na gotowe struktury adresów.
-     * Może zwrócić kilka adresów (np. nazwa z wieloma rekordami w DNS),
+     * Może zwrócić kilka adresów (np. "localhost" → ::1 i 127.0.0.1),
      * dlatego niżej próbujemy po kolei, aż któryś connect() się uda.
+     *   AF_UNSPEC – adresy obu rodzin, AF_INET / AF_INET6 – tylko wybranej.
      */
     memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_INET;                /* IPv4 */
+    hints.ai_family = family;
     hints.ai_socktype = SOCK_STREAM;          /* TCP */
     hints.ai_flags = AI_NUMERICSERV;
 
@@ -141,9 +147,13 @@ int main(int argc, char *argv[])
     const char *host = NULL;
     const char *port = DEFAULT_PORT;
     const char *message = NULL;
+    int family = AF_UNSPEC;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-h") == 0 && i + 1 < argc)
+        int f = parse_family(argv[i]);
+        if (f != -1)
+            family = f;
+        else if (strcmp(argv[i], "-h") == 0 && i + 1 < argc)
             host = argv[++i];
         else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc)
             port = argv[++i];
@@ -157,7 +167,7 @@ int main(int argc, char *argv[])
 
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    int fd = connect_to(host, port);
+    int fd = connect_to(family, host, port);
     char line[BUF_SIZE];
 
     if (message != NULL) {

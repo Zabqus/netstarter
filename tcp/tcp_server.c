@@ -2,12 +2,14 @@
  * tcp_server.c – serwer echo TCP.
  *
  * Uruchomienie:
- *   ./build/tcp_server [-4] [-p <port>]       (domyślnie: IPv4, port 5000)
+ *   ./build/tcp_server [-4|-6] [-p <port>]    (domyślnie: IPv4, port 5000)
  *
- * Test bez klienta:  nc 127.0.0.1 5000   (wpisany tekst wraca z powrotem)
+ * Test bez klienta:  nc 127.0.0.1 5000   /   nc -6 ::1 5000
+ *                    (wpisany tekst wraca z powrotem)
  *
  * Sekwencja wywołań:
- *   getaddrinfo → socket → setsockopt(SO_REUSEADDR) → bind → listen →
+ *   getaddrinfo → socket → setsockopt(SO_REUSEADDR) →
+ *   [tylko IPv6: setsockopt(IPV6_V6ONLY)] → bind → listen →
  *   accept (pętla) → recv / send_all (pętla) → close(klient) → ... → close(serwer)
  *
  * Klienci obsługiwani są sekwencyjnie – jeden po drugim. Gdy jeden jest połączony,
@@ -21,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>      /* memset, strcmp */
 #include <unistd.h>      /* close */
+#include <netinet/in.h>  /* IPPROTO_IPV6, IPV6_V6ONLY */
 #include <sys/socket.h>  /* socket, setsockopt, bind, listen, accept, recv */
 
 #include "net_common.h"
@@ -43,8 +46,9 @@ static void on_sigint(int sig)
 
 static void usage(const char *prog)
 {
-    fprintf(stderr, "Użycie: %s [-4] [-p <port>]\n"
+    fprintf(stderr, "Użycie: %s [-4|-6] [-p <port>]\n"
                     "  -4         IPv4 (domyślnie)\n"
+                    "  -6         IPv6\n"
                     "  -p <port>  port nasłuchu (domyślnie " DEFAULT_PORT ")\n", prog);
     exit(EXIT_FAILURE);
 }
@@ -58,7 +62,7 @@ static int create_listen_socket(int family, const char *port)
     /*
      * getaddrinfo() wypełnia gotową strukturę adresu (sockaddr_in / sockaddr_in6),
      * dzięki czemu kod nie zależy od wersji IP.
-     *   AI_PASSIVE + host NULL  → adres "dowolny" (0.0.0.0 dla IPv4), czyli
+     *   AI_PASSIVE + host NULL  → adres "dowolny" (0.0.0.0 / ::), czyli
      *                             nasłuch na wszystkich interfejsach,
      *   AI_NUMERICSERV          → port musi być liczbą (bez szukania w /etc/services).
      */
@@ -87,6 +91,18 @@ static int create_listen_socket(int family, const char *port)
     int on = 1;
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on) < 0)
         die("setsockopt(SO_REUSEADDR)");
+
+    /*
+     * IPV6_V6ONLY = 1: gniazdo IPv6 przyjmuje WYŁĄCZNIE ruch IPv6.
+     * Domyślnie w Linuxie (sysctl net.ipv6.bindv6only = 0) gniazdo na "::" przyjmowałoby
+     * też połączenia IPv4, widziane jako adresy IPv4-mapped, np. ::ffff:192.168.1.202.
+     * Z V6ONLY podział jest czysty: serwer -4 obsługuje IPv4, serwer -6 obsługuje IPv6
+     * i oba mogą działać jednocześnie na tym samym porcie. Musi być ustawione przed bind().
+     */
+    if (res->ai_family == AF_INET6) {
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof on) < 0)
+            die("setsockopt(IPV6_V6ONLY)");
+    }
 
     /* bind(): przypisuje gniazdu lokalny adres i port. Port < 1024 wymaga uprawnień. */
     if (bind(fd, res->ai_addr, res->ai_addrlen) < 0)
@@ -148,8 +164,9 @@ int main(int argc, char *argv[])
 
     /* Proste ręczne parsowanie argumentów. */
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-4") == 0)
-            family = AF_INET;
+        int f = parse_family(argv[i]);   /* "-4" → AF_INET, "-6" → AF_INET6, inne → -1 */
+        if (f != -1)
+            family = f;
         else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc)
             port = argv[++i];
         else

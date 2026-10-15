@@ -2,12 +2,14 @@
  * udp_server.c – serwer echo UDP.
  *
  * Uruchomienie:
- *   ./build/udp_server [-4] [-p <port>]       (domyślnie: IPv4, port 5001)
+ *   ./build/udp_server [-4|-6] [-p <port>]    (domyślnie: IPv4, port 5001)
  *
- * Test bez klienta:  nc -u 127.0.0.1 5001   (wpisana linia wraca z powrotem)
+ * Test bez klienta:  nc -u 127.0.0.1 5001   /   nc -u -6 ::1 5001
+ *                    (wpisana linia wraca z powrotem)
  *
  * Sekwencja wywołań:
- *   getaddrinfo → socket → setsockopt(SO_REUSEADDR) → bind →
+ *   getaddrinfo → socket → setsockopt(SO_REUSEADDR) →
+ *   [tylko IPv6: setsockopt(IPV6_V6ONLY)] → bind →
  *   recvfrom / sendto (pętla) → close
  *
  * UDP jest bezpołączeniowy: nie ma listen() ani accept(). Jedno gniazdo obsługuje
@@ -22,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>      /* memset, strcmp */
 #include <unistd.h>      /* close */
+#include <netinet/in.h>  /* IPPROTO_IPV6, IPV6_V6ONLY */
 #include <sys/socket.h>  /* socket, setsockopt, bind, recvfrom, sendto */
 
 #include "net_common.h"
@@ -40,8 +43,9 @@ static void on_sigint(int sig)
 
 static void usage(const char *prog)
 {
-    fprintf(stderr, "Użycie: %s [-4] [-p <port>]\n"
+    fprintf(stderr, "Użycie: %s [-4|-6] [-p <port>]\n"
                     "  -4         IPv4 (domyślnie)\n"
+                    "  -6         IPv6\n"
                     "  -p <port>  port nasłuchu (domyślnie " DEFAULT_PORT ")\n", prog);
     exit(EXIT_FAILURE);
 }
@@ -77,6 +81,16 @@ static int create_udp_socket(int family, const char *port)
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on) < 0)
         die("setsockopt(SO_REUSEADDR)");
 
+    /*
+     * IPV6_V6ONLY = 1: gniazdo IPv6 odbiera wyłącznie datagramy IPv6
+     * (bez tego dostawałoby też IPv4 jako adresy ::ffff:a.b.c.d).
+     * Szczegółowy opis w tcp_server.c. Musi być ustawione przed bind().
+     */
+    if (res->ai_family == AF_INET6) {
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof on) < 0)
+            die("setsockopt(IPV6_V6ONLY)");
+    }
+
     /* bind(): od teraz jądro kieruje do tego gniazda datagramy na nasz port. */
     if (bind(fd, res->ai_addr, res->ai_addrlen) < 0)
         die("bind");
@@ -91,8 +105,9 @@ int main(int argc, char *argv[])
     const char *port = DEFAULT_PORT;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-4") == 0)
-            family = AF_INET;
+        int f = parse_family(argv[i]);   /* "-4" → AF_INET, "-6" → AF_INET6, inne → -1 */
+        if (f != -1)
+            family = f;
         else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc)
             port = argv[++i];
         else
