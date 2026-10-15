@@ -9,7 +9,7 @@
  *
  * Sekwencja wywołań:
  *   getaddrinfo → socket → setsockopt(SO_REUSEADDR) →
- *   [tylko IPv6: setsockopt(IPV6_V6ONLY)] → bind →
+ *   [tylko IPv6: setsockopt(IPV6_V6ONLY)] → bind → capset (zrzucenie uprawnień) →
  *   recvfrom / sendto (pętla) → close
  *
  * UDP jest bezpołączeniowy: nie ma listen() ani accept(). Jedno gniazdo obsługuje
@@ -126,6 +126,12 @@ int main(int argc, char *argv[])
         die("sigaction");
 
     int fd = create_udp_socket(family, port);
+
+    /* Port już zbindowany – CAP_NET_BIND_SERVICE nie jest dalej potrzebna (opis w tcp_server.c). */
+    if (drop_capabilities() < 0)
+        perror("capset");
+    else
+        printf("[UDP][srv] capabilities zrzucone (gniazdo działa dalej)\n");
 
     struct sockaddr_storage local;
     socklen_t local_len = sizeof local;

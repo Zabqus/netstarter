@@ -2,14 +2,15 @@
  * raw_client.c – klient echo na gniazdach surowych (warstwa 3), protokół NS (IP proto 253).
  *
  * Uruchomienie (wymaga CAP_NET_RAW):
- *   sudo ./build/raw_client [-4] -h <host> [-m "wiadomość"]
+ *   sudo ./build/raw_client [-4|-6] -h <host> [-m "wiadomość"]     (domyślnie IPv4)
+ *   ./build/raw_client ...                                         (po sudo scripts/setcap.sh)
  *
  *   bez -m : każda linia ze stdin to osobne żądanie z kolejnym seq (Ctrl+D kończy),
  *   z -m   : jedno żądanie, wypisanie odpowiedzi i RTT, koniec
  *            (kod wyjścia 1, gdy odpowiedź nie przyszła).
  *
  * Sekwencja wywołań:
- *   getaddrinfo → socket(AF_INET, SOCK_RAW, 253) → setsockopt(SO_RCVTIMEO) →
+ *   socket(AF_INET/AF_INET6, SOCK_RAW, 253) → getaddrinfo → setsockopt(SO_RCVTIMEO) →
  *   [budowa nagłówka NS + checksum] → sendto → recvfrom (aż przyjdzie pasujący REP) → close
  *
  * Każde gniazdo surowe protokołu 253 dostaje kopię każdego pakietu tego protokołu.
@@ -36,8 +37,8 @@
 
 static void usage(const char *prog)
 {
-    fprintf(stderr, "Użycie: %s [-4] -h <host> [-m \"wiadomość\"]\n"
-                    "  -4         IPv4 (domyślnie)\n"
+    fprintf(stderr, "Użycie: %s [-4|-6] -h <host> [-m \"wiadomość\"]\n"
+                    "  -4 / -6    IPv4 (domyślnie) / IPv6\n"
                     "  -h <host>  adres lub nazwa serwera\n"
                     "  -m <tekst> wyślij jedno żądanie i zakończ\n"
                     "Wymaga CAP_NET_RAW: sudo albo scripts/setcap.sh\n", prog);
@@ -57,7 +58,7 @@ static double elapsed_ms(const struct timespec *start)
  * Wysyła jedno żądanie REQ i czeka na pasującą odpowiedź REP.
  * Zwraca 0 – odpowiedź przyszła, -1 – timeout lub błąd.
  */
-static int ping_once(int fd, const struct sockaddr *dst, socklen_t dst_len,
+static int ping_once(int fd, int family, const struct sockaddr *dst, socklen_t dst_len,
                      uint16_t id, uint16_t seq, const char *text, size_t len)
 {
     uint8_t pkt[sizeof(struct ns_hdr) + NS_MAX_DATA];
@@ -74,8 +75,8 @@ static int ping_once(int fd, const struct sockaddr *dst, socklen_t dst_len,
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     /*
-     * sendto(): wysyłamy sam pakiet NS – jądro dokleja przed nim nagłówek IPv4
-     * (adres źródłowy wg routingu, TTL, protocol = 253, suma kontrolna IP).
+     * sendto(): wysyłamy sam pakiet NS – jądro dokleja przed nim nagłówek IP
+     * (adres źródłowy wg routingu, TTL / hop limit, protokół 253; w IPv4 też sumę IP).
      */
     if (sendto(fd, pkt, pkt_len, 0, dst, dst_len) < 0) {
         perror("sendto");
@@ -101,19 +102,14 @@ static int ping_once(int fd, const struct sockaddr *dst, socklen_t dst_len,
         }
         double rtt = elapsed_ms(&start);
 
-        /* IPv4: pomijamy nagłówek IP (długość = ihl * 4 bajtów). */
-        int ours = 0;
-        const struct iphdr *ip = (const struct iphdr *)buf;
-        size_t ip_hlen = (size_t)ip->ihl * 4;
-        const struct ns_hdr *h = NULL;
+        /* IPv4: pomijamy nagłówek IP; IPv6: dane NS od początku bufora. */
+        size_t ns_len;
+        const uint8_t *ns = ns_locate(family, buf, (size_t)n, &ns_len);
+        const struct ns_hdr *h = (const struct ns_hdr *)ns;
 
-        if ((size_t)n >= sizeof(struct iphdr) && ip_hlen >= sizeof(struct iphdr)
-            && ip_hlen <= (size_t)n
-            && ns_validate(buf + ip_hlen, (size_t)n - ip_hlen) == NULL) {
-            h = (const struct ns_hdr *)(buf + ip_hlen);
-            /* Nasz pakiet = odpowiedź REP z naszym id i seq (nie własne REQ, nie cudze). */
-            ours = h->type == NS_TYPE_REP && ntohs(h->id) == id && ntohs(h->seq) == seq;
-        }
+        /* Nasz pakiet = poprawna odpowiedź REP z naszym id i seq (nie własne REQ, nie cudze). */
+        int ours = ns != NULL && ns_validate(ns, ns_len) == NULL
+                   && h->type == NS_TYPE_REP && ntohs(h->id) == id && ntohs(h->seq) == seq;
 
         if (!ours) {
             /*
@@ -128,12 +124,16 @@ static int ping_once(int fd, const struct sockaddr *dst, socklen_t dst_len,
         }
 
         uint16_t data_len = ntohs(h->length);
-        const char *data = (const char *)h + sizeof *h;
+        const char *data = (const char *)ns + sizeof *h;
         addr_to_host((struct sockaddr *)&from, from_len, from_str, sizeof from_str);
 
-        printf("[RAW][cli] REP od %s id=%u seq=%u ttl=%u, %u B: \"%.*s\"  RTT=%.3f ms\n",
-               from_str, (unsigned)id, (unsigned)seq, (unsigned)ip->ttl,
+        printf("[RAW][cli] REP od %s id=%u seq=%u, %u B: \"%.*s\"  RTT=%.3f ms\n",
+               from_str, (unsigned)id, (unsigned)seq,
                (unsigned)data_len, (int)data_len, data, rtt);
+
+        /* TTL znamy tylko w IPv4 – tam nagłówek IP jest w buforze. */
+        if (family == AF_INET)
+            printf("[RAW][cli]   IPv4: ttl=%u\n", (unsigned)((const struct iphdr *)buf)->ttl);
         return 0;
     }
 }
@@ -145,8 +145,9 @@ int main(int argc, char *argv[])
     const char *message = NULL;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-4") == 0)
-            family = AF_INET;
+        int f = parse_family(argv[i]);
+        if (f != -1)
+            family = f;
         else if (strcmp(argv[i], "-h") == 0 && i + 1 < argc)
             host = argv[++i];
         else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc)
@@ -195,14 +196,16 @@ int main(int argc, char *argv[])
 
     int status = 0;
     if (message != NULL) {
-        if (ping_once(fd, res->ai_addr, res->ai_addrlen, id, seq, message, strlen(message)) != 0)
+        if (ping_once(fd, family, res->ai_addr, res->ai_addrlen,
+                      id, seq, message, strlen(message)) != 0)
             status = 1;
     } else {
         printf("[RAW][cli] wpisuj linie, Ctrl+D kończy\n");
         char line[NS_MAX_DATA + 2];
         while (fgets(line, sizeof line, stdin) != NULL) {
             /* Wysyłamy linię bez końcowego '\n'. */
-            ping_once(fd, res->ai_addr, res->ai_addrlen, id, seq, line, text_len(line, strlen(line)));
+            ping_once(fd, family, res->ai_addr, res->ai_addrlen,
+                      id, seq, line, text_len(line, strlen(line)));
             seq++;
         }
     }

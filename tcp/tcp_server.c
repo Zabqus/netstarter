@@ -9,7 +9,7 @@
  *
  * Sekwencja wywołań:
  *   getaddrinfo → socket → setsockopt(SO_REUSEADDR) →
- *   [tylko IPv6: setsockopt(IPV6_V6ONLY)] → bind → listen →
+ *   [tylko IPv6: setsockopt(IPV6_V6ONLY)] → bind → listen → capset (zrzucenie uprawnień) →
  *   accept (pętla) → recv / send_all (pętla) → close(klient) → ... → close(serwer)
  *
  * Klienci obsługiwani są sekwencyjnie – jeden po drugim. Gdy jeden jest połączony,
@@ -189,6 +189,16 @@ int main(int argc, char *argv[])
         die("sigaction");
 
     int lfd = create_listen_socket(family, port);
+
+    /*
+     * Zasada najmniejszych uprawnień: CAP_NET_BIND_SERVICE (port < 1024) była potrzebna
+     * tylko do bind(). Gniazdo już nasłuchuje, więc zrzucamy wszystkie capabilities –
+     * nawet przy błędzie w obsłudze klienta nikt ich nie przejmie.
+     */
+    if (drop_capabilities() < 0)
+        perror("capset");
+    else
+        printf("[TCP][srv] capabilities zrzucone (gniazdo działa dalej)\n");
 
     /* getsockname(): odczytuje adres, pod którym gniazdo faktycznie nasłuchuje. */
     struct sockaddr_storage local;

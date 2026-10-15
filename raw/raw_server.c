@@ -2,24 +2,26 @@
  * raw_server.c – serwer echo na gniazdach surowych (warstwa 3), protokół NS (IP proto 253).
  *
  * Uruchomienie (wymaga CAP_NET_RAW):
- *   sudo ./build/raw_server [-4]           (domyślnie IPv4)
+ *   sudo ./build/raw_server [-4|-6]        (domyślnie IPv4)
+ *   ./build/raw_server [-4|-6]             (po sudo scripts/setcap.sh)
  *
  * Sekwencja wywołań:
- *   socket(AF_INET, SOCK_RAW, 253) → recvfrom (pętla) → [weryfikacja nagłówka NS] →
- *   sendto (odpowiedź REP) → close
+ *   socket(AF_INET/AF_INET6, SOCK_RAW, 253) → capset (zrzucenie uprawnień) →
+ *   recvfrom (pętla) → [weryfikacja nagłówka NS] → sendto (odpowiedź REP) → close
  *
  * Nie ma bind(), listen() ani portów: gniazdo surowe dostaje KAŻDY pakiet IP
  * z protokołem 253, który dotrze do tej maszyny (na dowolny jej adres).
  *
- * IPv4: recvfrom() zwraca pakiet RAZEM z nagłówkiem IP – nasze dane zaczynają się
- * od buf + ip->ihl * 4. Serwer wypisuje wybrane pola tego nagłówka.
+ * Różnica IPv4 / IPv6 (szczegóły: ns_locate() w raw_proto.h):
+ *   IPv4 – recvfrom() zwraca pakiet RAZEM z nagłówkiem IP, serwer wypisuje jego pola,
+ *   IPv6 – jądro zdejmuje nagłówek IPv6, w buforze są od razu dane NS.
  * Ctrl+C (SIGINT) kończy serwer i zamyka gniazdo.
  */
 #include <errno.h>       /* errno, EINTR */
 #include <signal.h>      /* sigaction, sig_atomic_t */
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>      /* memset, strcmp */
+#include <string.h>      /* memset */
 #include <unistd.h>      /* close */
 #include <arpa/inet.h>   /* inet_ntop, ntohs */
 #include <netinet/in.h>  /* struct in_addr */
@@ -42,8 +44,9 @@ static void on_sigint(int sig)
 
 static void usage(const char *prog)
 {
-    fprintf(stderr, "Użycie: %s [-4]\n"
+    fprintf(stderr, "Użycie: %s [-4|-6]\n"
                     "  -4   IPv4 (domyślnie)\n"
+                    "  -6   IPv6\n"
                     "Wymaga CAP_NET_RAW: sudo albo scripts/setcap.sh\n", prog);
     exit(EXIT_FAILURE);
 }
@@ -74,8 +77,9 @@ int main(int argc, char *argv[])
     int family = AF_INET;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-4") == 0)
-            family = AF_INET;
+        int f = parse_family(argv[i]);   /* "-4" → AF_INET, "-6" → AF_INET6, inne → -1 */
+        if (f != -1)
+            family = f;
         else
             usage(argv[0]);
     }
@@ -92,7 +96,18 @@ int main(int argc, char *argv[])
         die("sigaction");
 
     int fd = ns_open_socket(family);
-    printf("[RAW][srv] czekam na pakiety IPv4 protokołu %d (Ctrl+C kończy)\n", NS_PROTO);
+
+    /*
+     * CAP_NET_RAW była potrzebna tylko do socket(). Gniazdo już mamy, więc zrzucamy
+     * wszystkie capabilities – nawet przy błędzie w serwerze nikt ich nie przejmie.
+     */
+    if (drop_capabilities() < 0)
+        perror("capset");
+    else
+        printf("[RAW][srv] capabilities zrzucone (gniazdo działa dalej)\n");
+
+    printf("[RAW][srv] czekam na pakiety %s protokołu %d (Ctrl+C kończy)\n",
+           family == AF_INET6 ? "IPv6" : "IPv4", NS_PROTO);
 
     uint8_t buf[RECV_BUF_SIZE];
     uint8_t reply[sizeof(struct ns_hdr) + NS_MAX_DATA];
@@ -112,19 +127,11 @@ int main(int argc, char *argv[])
         }
         addr_to_host((struct sockaddr *)&peer, peer_len, peer_str, sizeof peer_str);
 
-        /*
-         * IPv4: na początku bufora jest nagłówek IP. Jego długość jest zmienna
-         * (opcje IP) – pole ihl podaje ją w słowach 32-bitowych, stąd * 4.
-         */
-        if ((size_t)n < sizeof(struct iphdr))
+        /* Pomijamy nagłówek IPv4 albo (IPv6) bierzemy bufor od początku. */
+        size_t pkt_len;
+        const uint8_t *pkt = ns_locate(family, buf, (size_t)n, &pkt_len);
+        if (pkt == NULL)
             continue;
-        const struct iphdr *ip = (const struct iphdr *)buf;
-        size_t ip_hlen = (size_t)ip->ihl * 4;
-        if (ip_hlen < sizeof(struct iphdr) || ip_hlen > (size_t)n)
-            continue;
-
-        const uint8_t *pkt = buf + ip_hlen;        /* tu zaczyna się nagłówek NS */
-        size_t pkt_len = (size_t)n - ip_hlen;
 
         const char *err = ns_validate(pkt, pkt_len);
         if (err != NULL) {
@@ -136,7 +143,7 @@ int main(int argc, char *argv[])
 
         /*
          * Gniazdo surowe dostaje kopię KAŻDEGO pakietu protokołu 253 – także naszych
-         * własnych odpowiedzi REP, gdy klient jest na tej samej maszynie (127.0.0.1).
+         * własnych odpowiedzi REP, gdy klient jest na tej samej maszynie.
          * Obsługujemy tylko żądania.
          */
         if (h->type != NS_TYPE_REQ)
@@ -150,7 +157,18 @@ int main(int argc, char *argv[])
         printf("[RAW][srv] REQ od %s id=%u seq=%u, %u B: \"%.*s\"\n",
                peer_str, (unsigned)id, (unsigned)seq, (unsigned)data_len,
                (int)data_len, (const char *)data);
-        print_ipv4_header(ip);
+
+        if (family == AF_INET) {
+            print_ipv4_header((const struct iphdr *)buf);
+        } else {
+            /*
+             * Nagłówka IPv6 nie ma w buforze. Adres nadawcy znamy z recvfrom();
+             * hop limit czy adres docelowy dałoby się odczytać przez recvmsg()
+             * z opcjami IPV6_RECVHOPLIMIT / IPV6_RECVPKTINFO (dane pomocnicze).
+             */
+            printf("[RAW][srv]   IPv6: nagłówek zdjęty przez jądro, dane NS od bajtu 0 "
+                   "(%zd B w buforze)\n", n);
+        }
 
         if (data_len > NS_MAX_DATA) {
             printf("[RAW][srv]   za dużo danych – nie odpowiadam\n");
@@ -159,7 +177,7 @@ int main(int argc, char *argv[])
 
         /*
          * Odpowiedź: te same id, seq i dane, typ REP. Budujemy tylko nagłówek NS –
-         * nagłówek IP (adresy, TTL, protocol = 253, suma IP) dokłada jądro.
+         * nagłówek IP (adresy, TTL / hop limit, protokół 253) dokłada jądro.
          * sendto() na adres nadawcy z recvfrom().
          */
         size_t reply_len = ns_build(reply, NS_TYPE_REP, id, seq, data, data_len);

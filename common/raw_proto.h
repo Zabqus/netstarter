@@ -29,7 +29,8 @@
 #include <stdlib.h>      /* exit */
 #include <string.h>      /* memcpy */
 #include <arpa/inet.h>   /* htons, ntohs */
-#include <sys/socket.h>  /* socket, SOCK_RAW */
+#include <netinet/ip.h>  /* struct iphdr – nagłówek IPv4 */
+#include <sys/socket.h>  /* socket, SOCK_RAW, AF_INET6 */
 
 #include "net_common.h"  /* inet_checksum, die */
 
@@ -107,6 +108,36 @@ static inline const char *ns_validate(const uint8_t *pkt, size_t len)
         return "zła suma kontrolna";
 
     return NULL;
+}
+
+/*
+ * Znajduje początek pakietu NS w buforze odebranym przez recvfrom() z gniazda surowego.
+ * Tu jest najważniejsza różnica między IPv4 a IPv6:
+ *
+ *   IPv4: jądro oddaje pakiet RAZEM z nagłówkiem IP. Nagłówek ma zmienną długość
+ *         (opcje IP) – pole ihl podaje ją w słowach 32-bitowych, więc pomijamy ihl * 4 B.
+ *   IPv6: jądro zdejmuje nagłówek IPv6 (i ewentualne nagłówki rozszerzeń) –
+ *         dane NS zaczynają się od samego początku bufora. Tak definiuje to RFC 3542.
+ *
+ * Zwraca wskaźnik na nagłówek NS i zapisuje długość pakietu NS do *len,
+ * albo NULL, gdy bufor jest za krótki / nagłówek IPv4 uszkodzony.
+ */
+static inline const uint8_t *ns_locate(int family, const uint8_t *buf, size_t n, size_t *len)
+{
+    if (family == AF_INET6) {
+        *len = n;
+        return buf;
+    }
+
+    if (n < sizeof(struct iphdr))
+        return NULL;
+    const struct iphdr *ip = (const struct iphdr *)buf;
+    size_t ip_hlen = (size_t)ip->ihl * 4;
+    if (ip_hlen < sizeof(struct iphdr) || ip_hlen > n)
+        return NULL;
+
+    *len = n - ip_hlen;
+    return buf + ip_hlen;
 }
 
 /*
