@@ -35,6 +35,12 @@ _Noreturn void die(const char *msg);
 const char *addr_to_str(const struct sockaddr *sa, socklen_t len, char *buf, size_t n);
 
 /*
+ * Jak addr_to_str(), ale tylko sam adres, bez portu ("192.168.1.202", "fd00:10::202").
+ * Dla gniazd surowych – warstwa 3 nie ma pojęcia portu.
+ */
+const char *addr_to_host(const struct sockaddr *sa, socklen_t len, char *buf, size_t n);
+
+/*
  * Wysyła cały bufor przez gniazdo TCP. send() może wysłać mniej bajtów,
  * niż prosiliśmy (częściowy zapis), więc ponawiamy aż do skutku.
  * Zwraca 0 gdy wysłano wszystko, -1 przy błędzie (errno ustawione).

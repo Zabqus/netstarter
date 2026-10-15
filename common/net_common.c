@@ -43,6 +43,15 @@ const char *addr_to_str(const struct sockaddr *sa, socklen_t len, char *buf, siz
     return buf;
 }
 
+const char *addr_to_host(const struct sockaddr *sa, socklen_t len, char *buf, size_t n)
+{
+    /* Jak wyżej, ale bez bufora na port (NULL, 0) – getnameinfo zwróci sam adres. */
+    int rc = getnameinfo(sa, len, buf, (socklen_t)n, NULL, 0, NI_NUMERICHOST);
+    if (rc != 0)
+        snprintf(buf, n, "<nieznany adres: %s>", gai_strerror(rc));
+    return buf;
+}
+
 int send_all(int fd, const void *buf, size_t len)
 {
     const char *p = buf;   /* wskaźnik na pierwszy jeszcze niewysłany bajt */

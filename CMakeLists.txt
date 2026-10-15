@@ -58,3 +58,10 @@ target_link_libraries(udp_server PRIVATE netcommon)
 
 add_executable(udp_client udp/udp_client.c)
 target_link_libraries(udp_client PRIVATE netcommon)
+
+# Gniazda surowe (4.0)
+add_executable(raw_server raw/raw_server.c)
+target_link_libraries(raw_server PRIVATE netcommon)
+
+add_executable(raw_client raw/raw_client.c)
+target_link_libraries(raw_client PRIVATE netcommon)
