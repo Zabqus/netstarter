@@ -1,0 +1,8 @@
+# Repo jest edytowane na Windows, a uruchamiane na Linuxie.
+# Skrypty i reguły muszą mieć końce linii LF – z CRLF bash zgłasza "\r: command not found".
+*.sh   text eol=lf
+*.nft  text eol=lf
+*.c    text eol=lf
+*.h    text eol=lf
+*.md   text eol=lf
+CMakeLists.txt text eol=lf
