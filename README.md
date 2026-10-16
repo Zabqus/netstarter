@@ -1,126 +1,31 @@
 # netstarter
 
-Starter pack aplikacji sieciowych klient/serwer w C11 – samodzielna implementacja komunikacji
-w warstwie 4 (TCP, UDP) i warstwie 3 (gniazda surowe) bezpośrednio na API gniazd UNIX,
-po IPv4 i IPv6, bez żadnych bibliotek sieciowych. Wszystkie programy działają jako **echo**:
-klient wysyła tekst, serwer odsyła go z powrotem i loguje nadawcę.
+Klient i serwer echo w C11 na gniazdach UNIX (bez bibliotek sieciowych).
+Klient wysyła tekst, serwer odsyła go z powrotem.
 
-| Ocena | Zakres | Gdzie |
-|---|---|---|
-| 3.0 | Klient i serwer TCP oraz UDP po IPv4 | `tcp/`, `udp/` – [docs/01_tcp_udp.md](docs/01_tcp_udp.md) |
-| 3.5 | To samo po IPv6 | flaga `-6` – [docs/02_ipv6.md](docs/02_ipv6.md) |
-| 4.0 | Klient i serwer na gniazdach surowych | `raw/`, `common/raw_proto.h` – [docs/03_raw.md](docs/03_raw.md) |
-| 4.5 | Gniazda surowe i porty < 1024 bez roota | `scripts/setcap.sh` – [docs/04_permissions.md](docs/04_permissions.md) |
-| 5.0 | Firewall przepuszczający / blokujący ruch | `firewall/`, `scripts/firewall.sh` – [docs/05_firewall.md](docs/05_firewall.md) |
+## Zakres
 
-Pytania kontrolne z odpowiedziami: [docs/pytania_kontrolne.md](docs/pytania_kontrolne.md).
+- 3.0 – TCP i UDP po IPv4 (`tcp/`, `udp/`)
+- 3.5 – TCP i UDP po IPv6 (flaga `-6`)
+- 4.0 – gniazda surowe, własny protokół IP nr 253 (`raw/`, `common/raw_proto.h`)
+- 4.5 – gniazda surowe i porty < 1024 bez roota (`scripts/setcap.sh`)
+- 5.0 – firewall nftables (`firewall/netstarter.nft`, `scripts/firewall.sh`)
 
-## Wymagania
-
-- Linux (testowane: Debian 13 w kontenerach LXC na Proxmox VE),
-- kompilator C11, CMake ≥ 3.20,
-- narzędzia do demo:
+## Budowanie (Linux)
 
 ```
-sudo apt install build-essential cmake gdb git tcpdump nftables libcap2-bin iproute2 netcat-openbsd
-```
-
-Kod korzysta wyłącznie z libc i POSIX (`sys/socket.h`, `netdb.h`, `arpa/inet.h`, `netinet/ip.h`).
-Na Windows (CLion) projekt budujemy toolchainem
-WSL lub zdalnym – MinGW nie ma nagłówków UNIX.
-
-## Budowanie
-
-```
-git clone https://github.com/Zabqus/netstarter.git
-cd netstarter
-bash scripts/build.sh            # Debug (domyślnie); Release: bash scripts/build.sh Release
-sudo scripts/setcap.sh           # capabilities dla serwerów i programów raw (po KAŻDYM buildzie)
-```
-
-Binarki trafiają do `build/`. Flagi kompilacji: `-std=c11 -Wall -Wextra -pedantic` –
-kod kompiluje się bez ostrzeżeń.
-
-## Programy
-
-| Program | Argumenty | Domyślnie | Uprawnienia |
-|---|---|---|---|
-| `tcp_server` | `[-4\|-6] [-p <port>]` | IPv4, port 5000 | `cap_net_bind_service` dla portu < 1024 |
-| `tcp_client` | `[-4\|-6] -h <host> [-p <port>] [-m "tekst"]` | dowolna wersja IP, port 5000 | – |
-| `udp_server` | `[-4\|-6] [-p <port>]` | IPv4, port 5001 | `cap_net_bind_service` dla portu < 1024 |
-| `udp_client` | `[-4\|-6] -h <host> [-p <port>] [-m "tekst"]` | dowolna wersja IP, port 5001 | – |
-| `raw_server` | `[-4\|-6]` | IPv4, protokół IP 253 | `cap_net_raw` |
-| `raw_client` | `[-4\|-6] -h <host> [-m "tekst"]` | IPv4, protokół IP 253 | `cap_net_raw` |
-
-- Klient **bez `-m`** czyta linie ze stdin w pętli (Ctrl+D kończy), **z `-m`** wysyła jedną
-  wiadomość i kończy. Klienci UDP i raw czekają na odpowiedź 2 s i przy timeoucie
-  wypisują `brak odpowiedzi (timeout 2 s)`; z `-m` kończą się wtedy kodem 1.
-- Serwery kończy **Ctrl+C** (gniazda są zamykane).
-- Logi mają prefiks modułu, np. `[TCP][srv] połączenie od 192.168.1.202:43122`.
-
-Skrypty:
-
-| Skrypt | Opis |
-|---|---|
-| `scripts/build.sh [Debug\|Release]` | `cmake` + build do `build/` |
-| `sudo scripts/setcap.sh` | `cap_net_raw+ep` → raw, `cap_net_bind_service+ep` → serwery TCP/UDP, na końcu `getcap` |
-| `sudo scripts/firewall.sh load` | ładuje reguły nftables z `firewall/netstarter.nft` (tabela `inet netstarter`) |
-| `sudo scripts/firewall.sh unload` | usuwa tabelę `inet netstarter` |
-| `sudo scripts/firewall.sh status` | reguły z licznikami |
-
-## Szybki start na dwóch kontenerach
-
-| Rola | Hostname | IPv4 | IPv6 |
-|---|---|---|---|
-| Serwer | `net-server` | `192.168.1.201` | `fd00:10::201` |
-| Klient | `net-client` | `192.168.1.202` | `fd00:10::202` |
-
-Na obu kontenerach, jako `student`:
-
-```
-cd ~/netstarter && git pull
 bash scripts/build.sh
 sudo scripts/setcap.sh
 ```
 
-| Moduł | `net-server` | `net-client` |
-|---|---|---|
-| TCP / IPv4 | `./build/tcp_server` | `./build/tcp_client -h 192.168.1.201 -m "hej"` |
-| TCP / IPv6 | `./build/tcp_server -6` | `./build/tcp_client -h fd00:10::201 -m "hej"` |
-| UDP / IPv4 | `./build/udp_server` | `./build/udp_client -h 192.168.1.201 -m "hej"` |
-| UDP / IPv6 | `./build/udp_server -6` | `./build/udp_client -h fd00:10::201 -m "hej"` |
-| raw / IPv4 | `./build/raw_server` | `./build/raw_client -h 192.168.1.201 -m "hej"` |
-| raw / IPv6 | `./build/raw_server -6` | `./build/raw_client -6 -h fd00:10::201 -m "hej"` |
-| port < 1024 | `./build/tcp_server -p 80` | `./build/tcp_client -h 192.168.1.201 -p 80 -m "hej"` |
-| firewall | `sudo scripts/firewall.sh load` | TCP działa, UDP i raw → timeout |
-| | `sudo scripts/firewall.sh status` | (liczniki rosną) |
-| | `sudo scripts/firewall.sh unload` | wszystko znów działa |
-
-Podgląd ruchu na serwerze:
+## Uruchomienie
 
 ```
-sudo tcpdump -i eth0 -n 'tcp port 5000 or udp port 5001 or ip proto 253 or ip6 proto 253'
-ss -tulnp                     # gniazda nasłuchujące TCP i UDP
+./build/tcp_server [-4|-6] [-p port]          ./build/tcp_client -h host [-p port] [-m "tekst"]
+./build/udp_server [-4|-6] [-p port]          ./build/udp_client -h host [-p port] [-m "tekst"]
+./build/raw_server [-4|-6]                    ./build/raw_client [-4|-6] -h host [-m "tekst"]
+
+sudo scripts/firewall.sh load | status | unload
 ```
 
-Szczegółowe scenariusze demo z oczekiwanym wynikiem są w `docs/`.
-
-## Struktura
-
-```
-netstarter/
-├── CMakeLists.txt          # biblioteka netcommon + po jednym add_executable na program
-├── common/
-│   ├── net_common.h/.c     # die, addr_to_str, addr_to_host, send_all, inet_checksum,
-│   │                       # parse_family, text_len
-│   └── raw_proto.h         # protokół NS (proto 253): nagłówek, ns_build, ns_validate, ns_locate
-├── tcp/                    # tcp_server.c, tcp_client.c
-├── udp/                    # udp_server.c, udp_client.c
-├── raw/                    # raw_server.c, raw_client.c
-├── scripts/                # build.sh, setcap.sh, firewall.sh
-├── firewall/               # netstarter.nft – reguły nftables
-└── docs/                   # opis każdego poziomu + pytania kontrolne
-```
-
-Każdy plik `.c` zaczyna się blokiem komentarza: co to za program, jak go uruchomić
-i jaka jest sekwencja wywołań systemowych.
+Domyślne porty: TCP 5000, UDP 5001.

@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
 
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    /* zamieniamy nazwę/adres i port na adres serwera */
+    // zamieniamy nazwę/adres i port na adres serwera
     struct addrinfo hints;
     struct addrinfo *res;
     memset(&hints, 0, sizeof hints);
@@ -104,7 +104,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "getaddrinfo(%s): %s\n", host, gai_strerror(rc));
         return EXIT_FAILURE;
     }
-    /* bierzemy pierwszy adres – w UDP nie da się "sprawdzić" połączenia jak w TCP */
+    // bierzemy pierwszy adres – w UDP nie da się "sprawdzić" połączenia jak w TCP
 
     // tworzymy gniazdo UDP
     int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
@@ -123,14 +123,14 @@ int main(int argc, char *argv[])
     int status = 0;
 
     if (message != NULL) {
-        /* jedna wiadomość, z dopisanym '\n' */
+        // jedna wiadomość, z dopisanym '\n'
         int len = snprintf(line, sizeof line, "%s\n", message);
         if (len >= (int)sizeof line)
             len = (int)sizeof line - 1;   /* za długa – obcinamy */
         if (echo_once(fd, res, line, (size_t)len) != 0)
             status = 1;
     } else {
-        /* po timeoucie nie kończymy – można wysłać kolejną linię */
+        // po timeoucie nie kończymy – można wysłać kolejną linię
         printf("[UDP][cli] wpisuj linie, Ctrl+D kończy\n");
         while (fgets(line, sizeof line, stdin) != NULL)
             echo_once(fd, res, line, strlen(line));

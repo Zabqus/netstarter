@@ -27,7 +27,7 @@
 
 #define RECV_BUF_SIZE 65536   /* maks. rozmiar pakietu IP */
 
-/* Jedyna zmienna globalna – flaga ustawiana po Ctrl+C. */
+// Jedyna zmienna globalna – flaga ustawiana po Ctrl+C.
 static volatile sig_atomic_t g_stop = 0;
 
 static void on_sigint(int sig)
@@ -45,14 +45,14 @@ static void usage(const char *prog)
     exit(EXIT_FAILURE);
 }
 
-/* Wypisuje wybrane pola nagłówka IPv4. */
+// Wypisuje wybrane pola nagłówka IPv4.
 static void print_ipv4_header(const struct iphdr *ip)
 {
     char src[INET_ADDRSTRLEN];
     char dst[INET_ADDRSTRLEN];
     struct in_addr a;
 
-    /* adresy w nagłówku to surowe liczby 32-bit – zamieniamy na tekst */
+    // adresy w nagłówku to surowe liczby 32-bit – zamieniamy na tekst
     a.s_addr = ip->saddr;
     inet_ntop(AF_INET, &a, src, sizeof src);
     a.s_addr = ip->daddr;
@@ -77,7 +77,7 @@ int main(int argc, char *argv[])
 
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    /* Ctrl+C: bez SA_RESTART, żeby recvfrom() się przerwało */
+    // Ctrl+C: bez SA_RESTART, żeby recvfrom() się przerwało
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_sigint;
@@ -86,7 +86,7 @@ int main(int argc, char *argv[])
     if (sigaction(SIGINT, &sa, NULL) < 0)
         die("sigaction");
 
-    /* tworzymy gniazdo surowe protokołu 253 */
+    // tworzymy gniazdo surowe protokołu 253
     int fd = ns_open_socket(family);
 
     printf("[RAW][srv] czekam na pakiety %s protokołu %d (Ctrl+C kończy)\n",
@@ -100,7 +100,7 @@ int main(int argc, char *argv[])
         struct sockaddr_storage peer;
         socklen_t peer_len = sizeof peer;
 
-        /* odbieramy jeden pakiet IP i adres nadawcy (bez portu) */
+        // odbieramy jeden pakiet IP i adres nadawcy (bez portu)
         ssize_t n = recvfrom(fd, buf, sizeof buf, 0, (struct sockaddr *)&peer, &peer_len);
         if (n < 0) {
             if (errno == EINTR)
@@ -110,13 +110,13 @@ int main(int argc, char *argv[])
         }
         addr_to_host((struct sockaddr *)&peer, peer_len, peer_str, sizeof peer_str);
 
-        /* szukamy pakietu NS (IPv4: za nagłówkiem IP, IPv6: od początku) */
+        // szukamy pakietu NS (IPv4: za nagłówkiem IP, IPv6: od początku)
         size_t pkt_len;
         const uint8_t *pkt = ns_locate(family, buf, (size_t)n, &pkt_len);
         if (pkt == NULL)
             continue;
 
-        /* sprawdzamy magic, wersję, długość i sumę kontrolną */
+        // sprawdzamy magic, wersję, długość i sumę kontrolną
         const char *err = ns_validate(pkt, pkt_len);
         if (err != NULL) {
             printf("[RAW][srv] odrzucony pakiet od %s: %s\n", peer_str, err);
@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
 
         const struct ns_hdr *h = (const struct ns_hdr *)pkt;
 
-        /* obsługujemy tylko żądania (gniazdo widzi też nasze własne odpowiedzi) */
+        // obsługujemy tylko żądania (gniazdo widzi też nasze własne odpowiedzi)
         if (h->type != NS_TYPE_REQ)
             continue;
 
@@ -151,7 +151,7 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        /* budujemy odpowiedź REP (te same id, seq i dane) i odsyłamy ją nadawcy */
+        // budujemy odpowiedź REP (te same id, seq i dane) i odsyłamy ją nadawcy
         size_t reply_len = ns_build(reply, NS_TYPE_REP, id, seq, data, data_len);
         if (sendto(fd, reply, reply_len, 0, (struct sockaddr *)&peer, peer_len) < 0)
             perror("sendto");

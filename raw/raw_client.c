@@ -40,7 +40,7 @@ static void usage(const char *prog)
     exit(EXIT_FAILURE);
 }
 
-/* Ile milisekund minęło od start (zegar monotoniczny). */
+// Ile milisekund minęło od start (zegar monotoniczny).
 static double elapsed_ms(const struct timespec *start)
 {
     struct timespec now;
@@ -49,7 +49,7 @@ static double elapsed_ms(const struct timespec *start)
          + (double)(now.tv_nsec - start->tv_nsec) / 1e6;
 }
 
-/* Wysyła żądanie REQ i czeka na pasującą odpowiedź REP. 0 – przyszła, -1 – timeout/błąd. */
+// Wysyła żądanie REQ i czeka na pasującą odpowiedź REP. 0 – przyszła, -1 – timeout/błąd.
 static int ping_once(int fd, int family, const struct sockaddr *dst, socklen_t dst_len,
                      uint16_t id, uint16_t seq, const char *text, size_t len)
 {
@@ -77,7 +77,7 @@ static int ping_once(int fd, int family, const struct sockaddr *dst, socklen_t d
         struct sockaddr_storage from;
         socklen_t from_len = sizeof from;
 
-        /* czekamy na pakiet maks. TIMEOUT_SECONDS */
+        // czekamy na pakiet maks. TIMEOUT_SECONDS
         ssize_t n = recvfrom(fd, buf, sizeof buf, 0, (struct sockaddr *)&from, &from_len);
         if (n < 0) {
             if (errno == EINTR)
@@ -101,7 +101,7 @@ static int ping_once(int fd, int family, const struct sockaddr *dst, socklen_t d
                    && h->type == NS_TYPE_REP && ntohs(h->id) == id && ntohs(h->seq) == seq;
 
         if (!ours) {
-            /* obcy pakiet – pomijamy, ale pilnujemy łącznego czasu czekania */
+            // obcy pakiet – pomijamy, ale pilnujemy łącznego czasu czekania
             if (rtt > TIMEOUT_SECONDS * 1000.0) {
                 printf("[RAW][cli] brak odpowiedzi (timeout %d s)\n", TIMEOUT_SECONDS);
                 return -1;
@@ -117,7 +117,7 @@ static int ping_once(int fd, int family, const struct sockaddr *dst, socklen_t d
                from_str, (unsigned)id, (unsigned)seq,
                (unsigned)data_len, (int)data_len, data, rtt);
 
-        /* TTL znamy tylko w IPv4 – tam nagłówek IP jest w buforze */
+        // TTL znamy tylko w IPv4 – tam nagłówek IP jest w buforze
         if (family == AF_INET)
             printf("[RAW][cli]   IPv4: ttl=%u\n", (unsigned)((const struct iphdr *)buf)->ttl);
         return 0;
@@ -146,10 +146,10 @@ int main(int argc, char *argv[])
 
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    /* tworzymy gniazdo surowe (najpierw – bez uprawnień od razu komunikat) */
+    // tworzymy gniazdo surowe (najpierw – bez uprawnień od razu komunikat)
     int fd = ns_open_socket(family);
 
-    /* zamieniamy nazwę/adres serwera na sockaddr (bez portu) */
+    // zamieniamy nazwę/adres serwera na sockaddr (bez portu)
     struct addrinfo hints;
     struct addrinfo *res;
     memset(&hints, 0, sizeof hints);
@@ -163,12 +163,12 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    /* ustawiamy timeout odbioru */
+    // ustawiamy timeout odbioru
     struct timeval tv = { .tv_sec = TIMEOUT_SECONDS, .tv_usec = 0 };
     if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) < 0)
         die("setsockopt(SO_RCVTIMEO)");
 
-    /* identyfikator klienta – PID obcięty do 16 bitów (jak w ping) */
+    // identyfikator klienta – PID obcięty do 16 bitów (jak w ping)
     uint16_t id = (uint16_t)(getpid() & 0xFFFF);
     uint16_t seq = 1;
 
@@ -186,7 +186,7 @@ int main(int argc, char *argv[])
         printf("[RAW][cli] wpisuj linie, Ctrl+D kończy\n");
         char line[NS_MAX_DATA + 2];
         while (fgets(line, sizeof line, stdin) != NULL) {
-            /* wysyłamy linię bez końcowego '\n' */
+            // wysyłamy linię bez końcowego '\n'
             ping_once(fd, family, res->ai_addr, res->ai_addrlen,
                       id, seq, line, text_len(line, strlen(line)));
             seq++;

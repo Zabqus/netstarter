@@ -26,7 +26,7 @@
 #define DEFAULT_PORT "5001"
 #define BUF_SIZE     1500   /* typowe MTU Ethernetu */
 
-/* Jedyna zmienna globalna – flaga ustawiana po Ctrl+C. */
+// Jedyna zmienna globalna – flaga ustawiana po Ctrl+C.
 static volatile sig_atomic_t g_stop = 0;
 
 static void on_sigint(int sig)
@@ -44,7 +44,7 @@ static void usage(const char *prog)
     exit(EXIT_FAILURE);
 }
 
-/* Tworzy gniazdo UDP przypisane do wszystkich adresów i zadanego portu. */
+// Tworzy gniazdo UDP przypisane do wszystkich adresów i zadanego portu.
 static int create_udp_socket(int family, const char *port)
 {
     struct addrinfo hints;
@@ -72,7 +72,7 @@ static int create_udp_socket(int family, const char *port)
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on) < 0)
         die("setsockopt(SO_REUSEADDR)");
 
-    /* IPv6: gniazdo przyjmuje tylko IPv6 */
+    // IPv6: gniazdo przyjmuje tylko IPv6
     if (res->ai_family == AF_INET6) {
         if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof on) < 0)
             die("setsockopt(IPV6_V6ONLY)");
@@ -103,7 +103,7 @@ int main(int argc, char *argv[])
 
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    /* Ctrl+C: bez SA_RESTART, żeby recvfrom() się przerwało */
+    // Ctrl+C: bez SA_RESTART, żeby recvfrom() się przerwało
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_sigint;

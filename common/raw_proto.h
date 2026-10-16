@@ -45,7 +45,7 @@ struct ns_hdr {
     uint16_t length;     /* długość danych */
     uint16_t checksum;   /* RFC 1071 po nagłówku + danych */
 } __attribute__((packed));
-/* packed – bez bajtów wyrównania, struktura = dokładnie 12 bajtów na kablu */
+// packed – bez bajtów wyrównania, struktura = dokładnie 12 bajtów na kablu
 _Static_assert(sizeof(struct ns_hdr) == 12, "nagłówek NS musi mieć 12 bajtów");
 
 // Buduje pakiet NS (nagłówek + dane) w buf. Zwraca jego długość.
@@ -54,7 +54,7 @@ static inline size_t ns_build(uint8_t *buf, uint8_t type, uint16_t id, uint16_t 
 {
     struct ns_hdr *h = (struct ns_hdr *)buf;
 
-    /* wypełniamy nagłówek (pola wielobajtowe przez htons) */
+    // wypełniamy nagłówek (pola wielobajtowe przez htons)
     h->magic    = htons(NS_MAGIC);
     h->version  = NS_VERSION;
     h->type     = type;
@@ -63,16 +63,16 @@ static inline size_t ns_build(uint8_t *buf, uint8_t type, uint16_t id, uint16_t 
     h->length   = htons((uint16_t)len);
     h->checksum = 0;                            /* przy liczeniu sumy musi być 0 */
 
-    /* dane wstawiamy zaraz za nagłówkiem */
+    // dane wstawiamy zaraz za nagłówkiem
     memcpy(buf + sizeof *h, data, len);
 
-    /* liczymy sumę kontrolną po całym pakiecie i wpisujemy ją do nagłówka */
+    // liczymy sumę kontrolną po całym pakiecie i wpisujemy ją do nagłówka
     size_t total = sizeof *h + len;
     h->checksum = htons(inet_checksum(buf, total));
     return total;
 }
 
-/* Sprawdza pakiet NS. NULL – poprawny, inaczej opis błędu. */
+// Sprawdza pakiet NS. NULL – poprawny, inaczej opis błędu.
 static inline const char *ns_validate(const uint8_t *pkt, size_t len)
 {
     if (len < sizeof(struct ns_hdr))
@@ -88,18 +88,16 @@ static inline const char *ns_validate(const uint8_t *pkt, size_t len)
     if (total > len)
         return "pole length większe niż pakiet";
 
-    /* suma po pakiecie razem z polem checksum daje 0, jeśli nic się nie zmieniło */
+    // suma po pakiecie razem z polem checksum daje 0, jeśli nic się nie zmieniło
     if (inet_checksum(pkt, total) != 0)
         return "zła suma kontrolna";
 
     return NULL;
 }
 
-/*
- * Znajduje początek pakietu NS w buforze z recvfrom():
- *   IPv4 – jądro oddaje pakiet RAZEM z nagłówkiem IP, pomijamy ihl * 4 bajtów,
- *   IPv6 – jądro zdejmuje nagłówek IPv6, dane NS są od początku bufora.
- */
+// Znajduje początek pakietu NS w buforze z recvfrom():
+//   IPv4 – pakiet przychodzi RAZEM z nagłówkiem IP, pomijamy ihl * 4 bajtów,
+//   IPv6 – jądro zdejmuje nagłówek IPv6, dane NS są od początku bufora.
 static inline const uint8_t *ns_locate(int family, const uint8_t *buf, size_t n, size_t *len)
 {
     if (family == AF_INET6) {
@@ -118,10 +116,10 @@ static inline const uint8_t *ns_locate(int family, const uint8_t *buf, size_t n,
     return buf + ip_hlen;
 }
 
-/* Tworzy gniazdo surowe protokołu 253 (wymaga CAP_NET_RAW). */
+// Tworzy gniazdo surowe protokołu 253 (wymaga CAP_NET_RAW).
 static inline int ns_open_socket(int family)
 {
-    /* gniazdo surowe: dostajemy każdy pakiet IP z protokołem 253, jądro dokłada nagłówek IP */
+    // gniazdo surowe: dostajemy każdy pakiet IP z protokołem 253, jądro dokłada nagłówek IP
     int fd = socket(family, SOCK_RAW, NS_PROTO);
     if (fd < 0) {
         if (errno == EPERM || errno == EACCES) {

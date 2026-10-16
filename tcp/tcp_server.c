@@ -26,7 +26,7 @@
 #define BACKLOG      8      /* ile połączeń może czekać w kolejce */
 #define BUF_SIZE     1024
 
-/* Jedyna zmienna globalna – flaga ustawiana po Ctrl+C. */
+// Jedyna zmienna globalna – flaga ustawiana po Ctrl+C.
 static volatile sig_atomic_t g_stop = 0;
 
 static void on_sigint(int sig)
@@ -44,7 +44,7 @@ static void usage(const char *prog)
     exit(EXIT_FAILURE);
 }
 
-/* Tworzy gniazdo nasłuchujące na wszystkich adresach i zadanym porcie. */
+// Tworzy gniazdo nasłuchujące na wszystkich adresach i zadanym porcie.
 static int create_listen_socket(int family, const char *port)
 {
     struct addrinfo hints;
@@ -67,7 +67,7 @@ static int create_listen_socket(int family, const char *port)
     if (fd < 0)
         die("socket");
 
-    /* pozwalamy od razu ponownie użyć portu po restarcie (bez czekania na TIME_WAIT) */
+    // pozwalamy od razu ponownie użyć portu po restarcie (bez czekania na TIME_WAIT)
     int on = 1;
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on) < 0)
         die("setsockopt(SO_REUSEADDR)");
@@ -91,13 +91,13 @@ static int create_listen_socket(int family, const char *port)
     return fd;
 }
 
-/* Rozmowa z jednym klientem: odbieramy dane i odsyłamy je z powrotem. */
+// Rozmowa z jednym klientem: odbieramy dane i odsyłamy je z powrotem.
 static void handle_client(int cfd, const char *peer)
 {
     char buf[BUF_SIZE];
 
     while (!g_stop) {
-        /* odbieramy dane: > 0 – bajty, 0 – klient się rozłączył, -1 – błąd */
+        // odbieramy dane: > 0 – bajty, 0 – klient się rozłączył, -1 – błąd
         ssize_t n = recv(cfd, buf, sizeof buf, 0);
         if (n < 0) {
             if (errno == EINTR)   /* przerwane przez Ctrl+C */
@@ -113,7 +113,7 @@ static void handle_client(int cfd, const char *peer)
         printf("[TCP][srv] %zd B od %s: \"%.*s\"\n",
                n, peer, (int)text_len(buf, (size_t)n), buf);
 
-        /* odsyłamy te same bajty (echo) */
+        // odsyłamy te same bajty (echo)
         if (send_all(cfd, buf, (size_t)n) < 0) {
             perror("send");
             return;
@@ -136,10 +136,10 @@ int main(int argc, char *argv[])
             usage(argv[0]);
     }
 
-    /* logi wypisujemy od razu, linia po linii */
+    // logi wypisujemy od razu, linia po linii
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    /* Ctrl+C: bez SA_RESTART, żeby accept()/recv() przerwały się i serwer się zamknął */
+    // Ctrl+C: bez SA_RESTART, żeby accept()/recv() przerwały się i serwer się zamknął
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_sigint;
@@ -150,7 +150,7 @@ int main(int argc, char *argv[])
 
     int lfd = create_listen_socket(family, port);
 
-    /* odczytujemy adres, na którym nasłuchujemy (do logu) */
+    // odczytujemy adres, na którym nasłuchujemy (do logu)
     struct sockaddr_storage local;
     socklen_t local_len = sizeof local;
     char addr[ADDR_STR_LEN];

@@ -33,7 +33,7 @@ static void usage(const char *prog)
     exit(EXIT_FAILURE);
 }
 
-/* Łączy się z host:port i zwraca połączone gniazdo. */
+// Łączy się z host:port i zwraca połączone gniazdo.
 static int connect_to(int family, const char *host, const char *port)
 {
     struct addrinfo hints;
@@ -51,7 +51,7 @@ static int connect_to(int family, const char *host, const char *port)
         exit(EXIT_FAILURE);
     }
 
-    /* próbujemy kolejnych adresów, aż któryś się połączy */
+    // próbujemy kolejnych adresów, aż któryś się połączy
     int fd = -1;
     char addr[ADDR_STR_LEN];
     for (struct addrinfo *ai = res; ai != NULL; ai = ai->ai_next) {
@@ -83,10 +83,8 @@ static int connect_to(int family, const char *host, const char *port)
     return fd;
 }
 
-/*
- * Odbiera dokładnie len bajtów – TCP to strumień, odpowiedź może przyjść w kawałkach.
- * 0 – OK, 1 – serwer zamknął połączenie, -1 – błąd.
- */
+// Odbiera dokładnie len bajtów – TCP to strumień, odpowiedź może przyjść w kawałkach.
+// 0 – OK, 1 – serwer zamknął połączenie, -1 – błąd.
 static int recv_exact(int fd, char *buf, size_t len)
 {
     size_t got = 0;
@@ -103,7 +101,7 @@ static int recv_exact(int fd, char *buf, size_t len)
     return 0;
 }
 
-/* Wysyła tekst i wypisuje echo. 0 – OK, inna wartość – koniec. */
+// Wysyła tekst i wypisuje echo. 0 – OK, inna wartość – koniec.
 static int echo_once(int fd, const char *text, size_t len)
 {
     char reply[BUF_SIZE];
@@ -114,7 +112,7 @@ static int echo_once(int fd, const char *text, size_t len)
         return -1;
     }
 
-    /* odbieramy tyle samo bajtów z powrotem */
+    // odbieramy tyle samo bajtów z powrotem
     int rc = recv_exact(fd, reply, len);
     if (rc == 1)
         printf("[TCP][cli] serwer zamknął połączenie\n");
@@ -155,13 +153,13 @@ int main(int argc, char *argv[])
     char line[BUF_SIZE];
 
     if (message != NULL) {
-        /* jedna wiadomość, z dopisanym '\n' */
+        // jedna wiadomość, z dopisanym '\n'
         int len = snprintf(line, sizeof line, "%s\n", message);
         if (len >= (int)sizeof line)
             len = (int)sizeof line - 1;   /* za długa – obcinamy */
         echo_once(fd, line, (size_t)len);
     } else {
-        /* kolejne linie ze stdin, Ctrl+D kończy */
+        // kolejne linie ze stdin, Ctrl+D kończy
         printf("[TCP][cli] wpisuj linie, Ctrl+D kończy\n");
         while (fgets(line, sizeof line, stdin) != NULL) {
             if (echo_once(fd, line, strlen(line)) != 0)
@@ -169,7 +167,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* zamykamy połączenie (FIN) – serwer dostanie recv() == 0 */
+    // zamykamy połączenie (FIN) – serwer dostanie recv() == 0
     close(fd);
     return 0;
 }

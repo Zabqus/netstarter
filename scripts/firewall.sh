@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# firewall.sh – zarządzanie regułami nftables projektu (etap 5.0).
-#
+
 # Użycie:  sudo scripts/firewall.sh load
 #          sudo scripts/firewall.sh unload
 #          sudo scripts/firewall.sh status
