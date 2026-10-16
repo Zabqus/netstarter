@@ -9,7 +9,7 @@
  *
  * Sekwencja wywołań:
  *   getaddrinfo → socket → setsockopt(SO_REUSEADDR) →
- *   [tylko IPv6: setsockopt(IPV6_V6ONLY)] → bind → listen → capset (zrzucenie uprawnień) →
+ *   [tylko IPv6: setsockopt(IPV6_V6ONLY)] → bind → listen →
  *   accept (pętla) → recv / send_all (pętla) → close(klient) → ... → close(serwer)
  *
  * Klienci obsługiwani są sekwencyjnie – jeden po drugim. Gdy jeden jest połączony,
@@ -68,7 +68,7 @@ static int create_listen_socket(int family, const char *port)
      */
     memset(&hints, 0, sizeof hints);
     hints.ai_family = family;
-    hints.ai_socktype = SOCK_STREAM;          /* TCP */
+    hints.ai_socktype = SOCK_STREAM;                            /* TCP */
     hints.ai_flags = AI_PASSIVE | AI_NUMERICSERV;
 
     int rc = getaddrinfo(NULL, port, &hints, &res);
@@ -134,6 +134,7 @@ static void handle_client(int cfd, const char *peer)
          * TCP to strumień bajtów, nie wiadomości: jeden recv() może zwrócić
          * pół wiadomości albo dwie naraz. Dla echa to bez znaczenia – odsyłamy co przyszło.
          */
+
         ssize_t n = recv(cfd, buf, sizeof buf, 0);
         if (n < 0) {
             if (errno == EINTR)   /* przerwane sygnałem – pętla sprawdzi g_stop */
@@ -190,16 +191,6 @@ int main(int argc, char *argv[])
 
     int lfd = create_listen_socket(family, port);
 
-    /*
-     * Zasada najmniejszych uprawnień: CAP_NET_BIND_SERVICE (port < 1024) była potrzebna
-     * tylko do bind(). Gniazdo już nasłuchuje, więc zrzucamy wszystkie capabilities –
-     * nawet przy błędzie w obsłudze klienta nikt ich nie przejmie.
-     */
-    if (drop_capabilities() < 0)
-        perror("capset");
-    else
-        printf("[TCP][srv] capabilities zrzucone (gniazdo działa dalej)\n");
-
     /* getsockname(): odczytuje adres, pod którym gniazdo faktycznie nasłuchuje. */
     struct sockaddr_storage local;
     socklen_t local_len = sizeof local;
@@ -210,11 +201,7 @@ int main(int argc, char *argv[])
            addr_to_str((struct sockaddr *)&local, local_len, addr, sizeof addr));
 
     while (!g_stop) {
-        /*
-         * accept(): czeka na połączenie z kolejki i zwraca NOWE gniazdo do rozmowy
-         * z tym jednym klientem. Gniazdo lfd dalej tylko nasłuchuje.
-         * sockaddr_storage pomieści adres dowolnej rodziny (IPv4 i IPv6).
-         */
+
         struct sockaddr_storage peer;
         socklen_t peer_len = sizeof peer;
         int cfd = accept(lfd, (struct sockaddr *)&peer, &peer_len);
@@ -233,6 +220,12 @@ int main(int argc, char *argv[])
         close(cfd);   /* koniec rozmowy z tym klientem – wysyła FIN */
     }
 
+
+    /*
+         * accept(): czeka na połączenie z kolejki i zwraca NOWE gniazdo do rozmowy
+         * z tym jednym klientem. Gniazdo lfd dalej tylko nasłuchuje.
+         * sockaddr_storage pomieści adres dowolnej rodziny (IPv4 i IPv6).
+         */
     printf("\n[TCP][srv] zamykam serwer\n");
     close(lfd);
     return 0;

@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 # firewall.sh – zarządzanie regułami nftables projektu (etap 5.0).
 #
-# Użycie:  sudo scripts/firewall.sh load [default|client|ipv6]
+# Użycie:  sudo scripts/firewall.sh load
 #          sudo scripts/firewall.sh unload
 #          sudo scripts/firewall.sh status
 #
-#   load     – ładuje reguły z pliku (nft -f); ponowne load zeruje liczniki
-#                default : firewall/netstarter.nft        (TCP accept, UDP i proto 253 drop)
-#                client  : firewall/netstarter_client.nft (blokada tylko od net-client)
-#                ipv6    : firewall/netstarter_ipv6.nft   (blokada tylko po IPv6)
+#   load     – ładuje reguły z firewall/netstarter.nft (nft -f); ponowne load zeruje liczniki
 #   unload   – usuwa całą tabelę inet netstarter (nft delete table)
 #   status   – pokazuje reguły z licznikami (nft list table)
 #
@@ -18,9 +15,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 FAMILY="inet"
 TABLE="netstarter"
+RULES="firewall/netstarter.nft"
 
 usage() {
-    echo "Użycie: sudo $0 load [default|client|ipv6] | unload | status" >&2
+    echo "Użycie: sudo $0 load | unload | status" >&2
     exit 1
 }
 
@@ -36,14 +34,8 @@ table_loaded() {
 
 case "${1:-}" in
     load)
-        case "${2:-default}" in
-            default) file="firewall/netstarter.nft" ;;
-            client)  file="firewall/netstarter_client.nft" ;;
-            ipv6)    file="firewall/netstarter_ipv6.nft" ;;
-            *)       usage ;;
-        esac
-        nft -f "$file"
-        echo "Załadowano $file"
+        nft -f "$RULES"
+        echo "Załadowano $RULES"
         echo
         nft list table "$FAMILY" "$TABLE"
         ;;

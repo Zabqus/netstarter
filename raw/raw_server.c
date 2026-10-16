@@ -6,7 +6,7 @@
  *   ./build/raw_server [-4|-6]             (po sudo scripts/setcap.sh)
  *
  * Sekwencja wywołań:
- *   socket(AF_INET/AF_INET6, SOCK_RAW, 253) → capset (zrzucenie uprawnień) →
+ *   socket(AF_INET/AF_INET6, SOCK_RAW, 253) →
  *   recvfrom (pętla) → [weryfikacja nagłówka NS] → sendto (odpowiedź REP) → close
  *
  * Nie ma bind(), listen() ani portów: gniazdo surowe dostaje KAŻDY pakiet IP
@@ -96,15 +96,6 @@ int main(int argc, char *argv[])
         die("sigaction");
 
     int fd = ns_open_socket(family);
-
-    /*
-     * CAP_NET_RAW była potrzebna tylko do socket(). Gniazdo już mamy, więc zrzucamy
-     * wszystkie capabilities – nawet przy błędzie w serwerze nikt ich nie przejmie.
-     */
-    if (drop_capabilities() < 0)
-        perror("capset");
-    else
-        printf("[RAW][srv] capabilities zrzucone (gniazdo działa dalej)\n");
 
     printf("[RAW][srv] czekam na pakiety %s protokołu %d (Ctrl+C kończy)\n",
            family == AF_INET6 ? "IPv6" : "IPv4", NS_PROTO);

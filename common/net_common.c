@@ -7,11 +7,8 @@
 #include <netdb.h>       /* getnameinfo, gai_strerror, NI_* */
 #include <stdio.h>       /* perror, snprintf */
 #include <stdlib.h>      /* exit */
-#include <string.h>      /* strcmp, memset */
-#include <unistd.h>      /* syscall */
+#include <string.h>      /* strcmp */
 #include <netinet/in.h>  /* AF_INET, AF_INET6 */
-#include <sys/syscall.h> /* SYS_capset */
-#include <linux/capability.h>  /* struktury dla capset – nagłówek jądra, nie libcap */
 
 void die(const char *msg)
 {
@@ -124,29 +121,4 @@ size_t text_len(const char *buf, size_t n)
     while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
         n--;
     return n;
-}
-
-int drop_capabilities(void)
-{
-    /*
-     * capset() przyjmuje nagłówek (wersja API + PID, 0 = bieżący proces)
-     * i tablicę zbiorów. W wersji 3 capabilities zajmują 64 bity, więc tablica
-     * ma 2 elementy po 32 bity. Same zera = żadnych capabilities.
-     */
-    struct __user_cap_header_struct hdr;
-    struct __user_cap_data_struct data[_LINUX_CAPABILITY_U32S_3];
-
-    memset(&hdr, 0, sizeof hdr);
-    hdr.version = _LINUX_CAPABILITY_VERSION_3;
-    hdr.pid = 0;
-    memset(data, 0, sizeof data);
-
-    /*
-     * glibc nie ma funkcji capset(), więc wołamy syscall bezpośrednio.
-     * Zmniejszanie uprawnień jest zawsze dozwolone; po wyzerowaniu zbioru permitted
-     * procesu nie da się ich odzyskać (chyba że przez execve pliku z capabilities).
-     */
-    if (syscall(SYS_capset, &hdr, data) < 0)
-        return -1;
-    return 0;
 }

@@ -66,13 +66,4 @@ int parse_family(const char *flag);
  */
 size_t text_len(const char *buf, size_t n);
 
-/*
- * Zasada najmniejszych uprawnień: zeruje wszystkie capabilities procesu
- * (zbiory effective, permitted i inheritable) – bezpośrednio wywołaniem systemowym
- * capset, bez libcap. Serwery wołają ją po utworzeniu i zbindowaniu gniazda:
- * uprawnienia sprawdzane są tylko przy socket()/bind(), gotowe gniazdo działa dalej.
- * Zwraca 0 przy sukcesie, -1 przy błędzie (errno ustawione).
- */
-int drop_capabilities(void);
-
 #endif /* NET_COMMON_H */
