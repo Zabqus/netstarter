@@ -1,14 +1,11 @@
 /*
- * raw_proto.h – własny protokół warstwy 3 "NS" (netstarter), wspólny dla raw_client i raw_server.
+ * raw_proto.h – własny protokół warstwy 3 "NS" (IP proto 253), wspólny dla raw_client i raw_server.
  *
- * Pakiet NS jest przenoszony bezpośrednio w IP, z numerem protokołu 253
- * (pole "protocol" w IPv4 / "next header" w IPv6). Numery 253 i 254 są zarezerwowane
- * do eksperymentów (RFC 3692), więc jądro ich nie obsługuje – nie ma tu portów, TCP ani UDP,
- * całą logikę (nagłówek, suma kontrolna, dopasowanie odpowiedzi) robimy sami.
+ * Protokół 253 jest zarezerwowany do eksperymentów (RFC 3692) – jądro go nie obsługuje,
+ * więc nagłówek, sumę kontrolną i dopasowanie odpowiedzi robimy sami.
  *
- * Budowa pakietu (za nagłówkiem IP):
+ * Pakiet NS (za nagłówkiem IP), pola w network byte order:
  *
- *   0               1               2               3
  *   +---------------+---------------+---------------+---------------+
  *   |          magic = "NS"         |    version    |     type      |
  *   +---------------+---------------+---------------+---------------+
@@ -17,8 +14,6 @@
  *   |            length             |           checksum            |
  *   +---------------+---------------+---------------+---------------+
  *   |                      dane (length bajtów) ...                 |
- *
- * Wszystkie pola wielobajtowe w network byte order (big-endian) – htons()/ntohs().
  */
 #ifndef RAW_PROTO_H
 #define RAW_PROTO_H
@@ -35,56 +30,49 @@
 #include "net_common.h"  /* inet_checksum, die */
 
 #define NS_PROTO     253         /* numer protokołu w nagłówku IP */
-#define NS_MAGIC     0x4E53      /* "NS" – pozwala odróżnić nasze pakiety od przypadkowych */
+#define NS_MAGIC     0x4E53      /* "NS" – odróżnia nasze pakiety od obcych */
 #define NS_VERSION   1
 #define NS_TYPE_REQ  1           /* żądanie (klient → serwer) */
 #define NS_TYPE_REP  2           /* odpowiedź (serwer → klient) */
-#define NS_MAX_DATA  1024        /* maksymalna długość danych w jednym pakiecie */
+#define NS_MAX_DATA  1024        /* maks. długość danych w pakiecie */
 
 struct ns_hdr {
-    uint16_t magic;      /* NS_MAGIC, network byte order */
+    uint16_t magic;      /* NS_MAGIC */
     uint8_t  version;    /* 1 */
     uint8_t  type;       /* REQ / REP */
-    uint16_t id;         /* identyfikator klienta (getpid() & 0xFFFF) */
+    uint16_t id;         /* identyfikator klienta (PID) */
     uint16_t seq;        /* numer kolejny */
-    uint16_t length;     /* długość danych po nagłówku */
-    uint16_t checksum;   /* RFC 1071 po nagłówku + danych, liczona z checksum = 0 */
+    uint16_t length;     /* długość danych */
+    uint16_t checksum;   /* RFC 1071 po nagłówku + danych */
 } __attribute__((packed));
-/*
- * packed: kompilator nie wstawi żadnych bajtów wyrównania – struktura w pamięci
- * odpowiada dokładnie bajtom na kablu. Sprawdzamy to przy kompilacji:
- */
+/* packed – bez bajtów wyrównania, struktura = dokładnie 12 bajtów na kablu */
 _Static_assert(sizeof(struct ns_hdr) == 12, "nagłówek NS musi mieć 12 bajtów");
 
-/*
- * Buduje kompletny pakiet NS w buforze buf (min. sizeof(struct ns_hdr) + len bajtów).
- * Zwraca łączną długość pakietu.
- */
+// Buduje pakiet NS (nagłówek + dane) w buf. Zwraca jego długość.
 static inline size_t ns_build(uint8_t *buf, uint8_t type, uint16_t id, uint16_t seq,
                               const void *data, size_t len)
 {
-    struct ns_hdr *h = (struct ns_hdr *)buf;   /* nagłówek leży na początku bufora */
+    struct ns_hdr *h = (struct ns_hdr *)buf;
 
+    /* wypełniamy nagłówek (pola wielobajtowe przez htons) */
     h->magic    = htons(NS_MAGIC);
     h->version  = NS_VERSION;
     h->type     = type;
     h->id       = htons(id);
     h->seq      = htons(seq);
     h->length   = htons((uint16_t)len);
-    h->checksum = 0;                            /* przy liczeniu sumy pole musi być zerem */
+    h->checksum = 0;                            /* przy liczeniu sumy musi być 0 */
 
-    memcpy(buf + sizeof *h, data, len);         /* dane zaraz za nagłówkiem */
+    /* dane wstawiamy zaraz za nagłówkiem */
+    memcpy(buf + sizeof *h, data, len);
 
-    /* Suma po nagłówku + danych; inet_checksum zwraca porządek hosta → htons. */
+    /* liczymy sumę kontrolną po całym pakiecie i wpisujemy ją do nagłówka */
     size_t total = sizeof *h + len;
     h->checksum = htons(inet_checksum(buf, total));
     return total;
 }
 
-/*
- * Sprawdza, czy pod pkt (len bajtów) leży poprawny pakiet NS.
- * Zwraca NULL gdy wszystko OK, w przeciwnym razie krótki opis błędu (do logu).
- */
+/* Sprawdza pakiet NS. NULL – poprawny, inaczej opis błędu. */
 static inline const char *ns_validate(const uint8_t *pkt, size_t len)
 {
     if (len < sizeof(struct ns_hdr))
@@ -100,10 +88,7 @@ static inline const char *ns_validate(const uint8_t *pkt, size_t len)
     if (total > len)
         return "pole length większe niż pakiet";
 
-    /*
-     * Weryfikacja RFC 1071: suma po całym pakiecie RAZEM z polem checksum daje 0
-     * (w zapisie ~suma), jeśli żaden bit się nie zmienił.
-     */
+    /* suma po pakiecie razem z polem checksum daje 0, jeśli nic się nie zmieniło */
     if (inet_checksum(pkt, total) != 0)
         return "zła suma kontrolna";
 
@@ -111,16 +96,9 @@ static inline const char *ns_validate(const uint8_t *pkt, size_t len)
 }
 
 /*
- * Znajduje początek pakietu NS w buforze odebranym przez recvfrom() z gniazda surowego.
- * Tu jest najważniejsza różnica między IPv4 a IPv6:
- *
- *   IPv4: jądro oddaje pakiet RAZEM z nagłówkiem IP. Nagłówek ma zmienną długość
- *         (opcje IP) – pole ihl podaje ją w słowach 32-bitowych, więc pomijamy ihl * 4 B.
- *   IPv6: jądro zdejmuje nagłówek IPv6 (i ewentualne nagłówki rozszerzeń) –
- *         dane NS zaczynają się od samego początku bufora. Tak definiuje to RFC 3542.
- *
- * Zwraca wskaźnik na nagłówek NS i zapisuje długość pakietu NS do *len,
- * albo NULL, gdy bufor jest za krótki / nagłówek IPv4 uszkodzony.
+ * Znajduje początek pakietu NS w buforze z recvfrom():
+ *   IPv4 – jądro oddaje pakiet RAZEM z nagłówkiem IP, pomijamy ihl * 4 bajtów,
+ *   IPv6 – jądro zdejmuje nagłówek IPv6, dane NS są od początku bufora.
  */
 static inline const uint8_t *ns_locate(int family, const uint8_t *buf, size_t n, size_t *len)
 {
@@ -132,7 +110,7 @@ static inline const uint8_t *ns_locate(int family, const uint8_t *buf, size_t n,
     if (n < sizeof(struct iphdr))
         return NULL;
     const struct iphdr *ip = (const struct iphdr *)buf;
-    size_t ip_hlen = (size_t)ip->ihl * 4;
+    size_t ip_hlen = (size_t)ip->ihl * 4;   /* ihl – długość nagłówka w słowach 32-bit */
     if (ip_hlen < sizeof(struct iphdr) || ip_hlen > n)
         return NULL;
 
@@ -140,16 +118,10 @@ static inline const uint8_t *ns_locate(int family, const uint8_t *buf, size_t n,
     return buf + ip_hlen;
 }
 
-/*
- * Otwiera gniazdo surowe protokołu NS dla danej rodziny (AF_INET / AF_INET6).
- * Gniazda surowe wymagają CAP_NET_RAW – bez niej socket() zwraca EPERM.
- */
+/* Tworzy gniazdo surowe protokołu 253 (wymaga CAP_NET_RAW). */
 static inline int ns_open_socket(int family)
 {
-    /*
-     * SOCK_RAW + numer protokołu 253: jądro przekaże nam każdy przychodzący pakiet IP
-     * z tym numerem protokołu, a przy wysyłaniu samo dołoży nagłówek IP z protocol = 253.
-     */
+    /* gniazdo surowe: dostajemy każdy pakiet IP z protokołem 253, jądro dokłada nagłówek IP */
     int fd = socket(family, SOCK_RAW, NS_PROTO);
     if (fd < 0) {
         if (errno == EPERM || errno == EACCES) {

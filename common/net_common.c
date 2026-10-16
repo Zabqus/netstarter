@@ -1,5 +1,5 @@
 /*
- * net_common.c – implementacja wspólnych helperów (opis funkcji w net_common.h).
+ * net_common.c – implementacja wspólnych helperów (opis w net_common.h).
  */
 #include "net_common.h"
 
@@ -21,12 +21,7 @@ const char *addr_to_str(const struct sockaddr *sa, socklen_t len, char *buf, siz
     char host[NI_MAXHOST];
     char port[NI_MAXSERV];
 
-    /*
-     * getnameinfo() działa dla IPv4 i IPv6 – sama sprawdza sa->sa_family.
-     * NI_NUMERICHOST / NI_NUMERICSERV: chcemy liczb (adres, numer portu),
-     * a nie nazw z DNS czy /etc/services – szybciej i bez zapytań do sieci.
-     * Zwraca 0 przy sukcesie albo kod błędu dla gai_strerror() (nie errno!).
-     */
+    /* zamieniamy adres i port na tekst (liczbowo, bez zapytań DNS) – działa dla IPv4 i IPv6 */
     int rc = getnameinfo(sa, len, host, sizeof host, port, sizeof port,
                          NI_NUMERICHOST | NI_NUMERICSERV);
     if (rc != 0) {
@@ -34,7 +29,7 @@ const char *addr_to_str(const struct sockaddr *sa, socklen_t len, char *buf, siz
         return buf;
     }
 
-    /* IPv6 w nawiasach, bo sam adres zawiera dwukropki i port by się zlał. */
+    // IPv6 w nawiasach, bo sam adres zawiera dwukropki
     if (sa->sa_family == AF_INET6)
         snprintf(buf, n, "[%s]:%s", host, port);
     else
@@ -45,7 +40,7 @@ const char *addr_to_str(const struct sockaddr *sa, socklen_t len, char *buf, siz
 
 const char *addr_to_host(const struct sockaddr *sa, socklen_t len, char *buf, size_t n)
 {
-    /* Jak wyżej, ale bez bufora na port (NULL, 0) – getnameinfo zwróci sam adres. */
+    /* to samo co wyżej, ale bez portu */
     int rc = getnameinfo(sa, len, buf, (socklen_t)n, NULL, 0, NI_NUMERICHOST);
     if (rc != 0)
         snprintf(buf, n, "<nieznany adres: %s>", gai_strerror(rc));
@@ -54,19 +49,17 @@ const char *addr_to_host(const struct sockaddr *sa, socklen_t len, char *buf, si
 
 int send_all(int fd, const void *buf, size_t len)
 {
-    const char *p = buf;   /* wskaźnik na pierwszy jeszcze niewysłany bajt */
-    size_t left = len;     /* ile bajtów zostało do wysłania */
+    const char *p = buf;   /* pierwszy niewysłany bajt */
+    size_t left = len;     /* ile zostało do wysłania */
 
     while (left > 0) {
         /*
-         * send() kopiuje dane do bufora nadawczego jądra i zwraca, ile przyjął –
-         * może to być mniej niż left (np. gdy bufor jest prawie pełny).
-         * MSG_NOSIGNAL: gdy druga strona zamknęła połączenie, dostaniemy błąd EPIPE
-         * zamiast sygnału SIGPIPE, który domyślnie zabiłby cały proces.
+         * wysyłamy resztę danych – send() może przyjąć mniej, niż prosiliśmy;
+         * MSG_NOSIGNAL: przy zamkniętym połączeniu błąd EPIPE zamiast zabijającego SIGPIPE
          */
         ssize_t sent = send(fd, p, left, MSG_NOSIGNAL);
         if (sent < 0) {
-            if (errno == EINTR)   /* przerwane przez sygnał – po prostu ponawiamy */
+            if (errno == EINTR)   /* przerwane sygnałem – ponawiamy */
                 continue;
             return -1;
         }
@@ -79,31 +72,24 @@ int send_all(int fd, const void *buf, size_t len)
 uint16_t inet_checksum(const void *data, size_t len)
 {
     const uint8_t *p = data;
-    uint32_t sum = 0;   /* 32 bity, żeby przeniesienia z dodawania 16-bitowego się nie gubiły */
+    uint32_t sum = 0;   /* 32 bity, żeby nie gubić przeniesień */
 
-    /*
-     * 1. Sumujemy dane jako kolejne słowa 16-bitowe.
-     *    Słowo składamy ręcznie z dwóch bajtów (starszy pierwszy = network byte order),
-     *    dzięki temu wynik nie zależy od architektury ani wyrównania w pamięci.
-     */
+    /* 1. sumujemy dane jako słowa 16-bitowe (starszy bajt pierwszy) */
     while (len > 1) {
         sum += (uint32_t)((p[0] << 8) | p[1]);
         p += 2;
         len -= 2;
     }
 
-    /* 2. Nieparzysta długość: ostatni bajt traktujemy jak słowo uzupełnione zerem. */
+    /* 2. nieparzysta długość – ostatni bajt dopełniamy zerem */
     if (len == 1)
         sum += (uint32_t)(p[0] << 8);
 
-    /*
-     * 3. Zawijanie przeniesień: wszystko powyżej 16 bitów dodajemy z powrotem
-     *    do młodszych 16 bitów (dodawanie w arytmetyce uzupełnień do jedności).
-     */
+    /* 3. przeniesienia powyżej 16 bitów dodajemy z powrotem */
     while (sum >> 16)
         sum = (sum & 0xFFFF) + (sum >> 16);
 
-    /* 4. Wynikiem jest negacja bitowa sumy (uzupełnienie do jedności). */
+    /* 4. wynik to negacja sumy */
     return (uint16_t)~sum;
 }
 

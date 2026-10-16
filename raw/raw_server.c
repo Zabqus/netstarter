@@ -2,20 +2,14 @@
  * raw_server.c – serwer echo na gniazdach surowych (warstwa 3), protokół NS (IP proto 253).
  *
  * Uruchomienie (wymaga CAP_NET_RAW):
- *   sudo ./build/raw_server [-4|-6]        (domyślnie IPv4)
- *   ./build/raw_server [-4|-6]             (po sudo scripts/setcap.sh)
+ *   sudo ./build/raw_server [-4|-6]        albo bez sudo po scripts/setcap.sh
  *
  * Sekwencja wywołań:
- *   socket(AF_INET/AF_INET6, SOCK_RAW, 253) →
- *   recvfrom (pętla) → [weryfikacja nagłówka NS] → sendto (odpowiedź REP) → close
+ *   socket(AF_INET/AF_INET6, SOCK_RAW, 253) → recvfrom (pętla) →
+ *   [sprawdzenie pakietu NS] → sendto (odpowiedź REP) → close
  *
- * Nie ma bind(), listen() ani portów: gniazdo surowe dostaje KAŻDY pakiet IP
- * z protokołem 253, który dotrze do tej maszyny (na dowolny jej adres).
- *
- * Różnica IPv4 / IPv6 (szczegóły: ns_locate() w raw_proto.h):
- *   IPv4 – recvfrom() zwraca pakiet RAZEM z nagłówkiem IP, serwer wypisuje jego pola,
- *   IPv6 – jądro zdejmuje nagłówek IPv6, w buforze są od razu dane NS.
- * Ctrl+C (SIGINT) kończy serwer i zamyka gniazdo.
+ * Nie ma bind(), listen() ani portów – gniazdo dostaje każdy pakiet z protokołem 253.
+ * IPv4: recvfrom() zwraca pakiet z nagłówkiem IP, IPv6: bez nagłówka (ns_locate()).
  */
 #include <errno.h>       /* errno, EINTR */
 #include <signal.h>      /* sigaction, sig_atomic_t */
@@ -31,9 +25,9 @@
 #include "net_common.h"
 #include "raw_proto.h"
 
-#define RECV_BUF_SIZE 65536   /* maksymalny rozmiar pakietu IP */
+#define RECV_BUF_SIZE 65536   /* maks. rozmiar pakietu IP */
 
-/* Jedyna zmienna globalna: flaga ustawiana przez obsługę SIGINT. */
+/* Jedyna zmienna globalna – flaga ustawiana po Ctrl+C. */
 static volatile sig_atomic_t g_stop = 0;
 
 static void on_sigint(int sig)
@@ -51,17 +45,14 @@ static void usage(const char *prog)
     exit(EXIT_FAILURE);
 }
 
-/* Wypisuje wybrane pola nagłówka IPv4 odebranego pakietu. */
+/* Wypisuje wybrane pola nagłówka IPv4. */
 static void print_ipv4_header(const struct iphdr *ip)
 {
-    /*
-     * Adresy w nagłówku to surowe 32-bitowe liczby (network byte order), a nie
-     * struktury sockaddr – do zamiany na tekst używamy więc inet_ntop().
-     */
     char src[INET_ADDRSTRLEN];
     char dst[INET_ADDRSTRLEN];
     struct in_addr a;
 
+    /* adresy w nagłówku to surowe liczby 32-bit – zamieniamy na tekst */
     a.s_addr = ip->saddr;
     inet_ntop(AF_INET, &a, src, sizeof src);
     a.s_addr = ip->daddr;
@@ -77,7 +68,7 @@ int main(int argc, char *argv[])
     int family = AF_INET;
 
     for (int i = 1; i < argc; i++) {
-        int f = parse_family(argv[i]);   /* "-4" → AF_INET, "-6" → AF_INET6, inne → -1 */
+        int f = parse_family(argv[i]);
         if (f != -1)
             family = f;
         else
@@ -86,7 +77,7 @@ int main(int argc, char *argv[])
 
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    /* Ctrl+C bez SA_RESTART – recvfrom() zwróci -1 z EINTR i pętla się zakończy. */
+    /* Ctrl+C: bez SA_RESTART, żeby recvfrom() się przerwało */
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_sigint;
@@ -95,6 +86,7 @@ int main(int argc, char *argv[])
     if (sigaction(SIGINT, &sa, NULL) < 0)
         die("sigaction");
 
+    /* tworzymy gniazdo surowe protokołu 253 */
     int fd = ns_open_socket(family);
 
     printf("[RAW][srv] czekam na pakiety %s protokołu %d (Ctrl+C kończy)\n",
@@ -108,7 +100,7 @@ int main(int argc, char *argv[])
         struct sockaddr_storage peer;
         socklen_t peer_len = sizeof peer;
 
-        /* recvfrom(): jeden pakiet IP; peer = adres nadawcy (bez portu – to warstwa 3). */
+        /* odbieramy jeden pakiet IP i adres nadawcy (bez portu) */
         ssize_t n = recvfrom(fd, buf, sizeof buf, 0, (struct sockaddr *)&peer, &peer_len);
         if (n < 0) {
             if (errno == EINTR)
@@ -118,12 +110,13 @@ int main(int argc, char *argv[])
         }
         addr_to_host((struct sockaddr *)&peer, peer_len, peer_str, sizeof peer_str);
 
-        /* Pomijamy nagłówek IPv4 albo (IPv6) bierzemy bufor od początku. */
+        /* szukamy pakietu NS (IPv4: za nagłówkiem IP, IPv6: od początku) */
         size_t pkt_len;
         const uint8_t *pkt = ns_locate(family, buf, (size_t)n, &pkt_len);
         if (pkt == NULL)
             continue;
 
+        /* sprawdzamy magic, wersję, długość i sumę kontrolną */
         const char *err = ns_validate(pkt, pkt_len);
         if (err != NULL) {
             printf("[RAW][srv] odrzucony pakiet od %s: %s\n", peer_str, err);
@@ -132,11 +125,7 @@ int main(int argc, char *argv[])
 
         const struct ns_hdr *h = (const struct ns_hdr *)pkt;
 
-        /*
-         * Gniazdo surowe dostaje kopię KAŻDEGO pakietu protokołu 253 – także naszych
-         * własnych odpowiedzi REP, gdy klient jest na tej samej maszynie.
-         * Obsługujemy tylko żądania.
-         */
+        /* obsługujemy tylko żądania (gniazdo widzi też nasze własne odpowiedzi) */
         if (h->type != NS_TYPE_REQ)
             continue;
 
@@ -152,11 +141,7 @@ int main(int argc, char *argv[])
         if (family == AF_INET) {
             print_ipv4_header((const struct iphdr *)buf);
         } else {
-            /*
-             * Nagłówka IPv6 nie ma w buforze. Adres nadawcy znamy z recvfrom();
-             * hop limit czy adres docelowy dałoby się odczytać przez recvmsg()
-             * z opcjami IPV6_RECVHOPLIMIT / IPV6_RECVPKTINFO (dane pomocnicze).
-             */
+            // nagłówka IPv6 nie ma w buforze – zdjęło go jądro
             printf("[RAW][srv]   IPv6: nagłówek zdjęty przez jądro, dane NS od bajtu 0 "
                    "(%zd B w buforze)\n", n);
         }
@@ -166,11 +151,7 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        /*
-         * Odpowiedź: te same id, seq i dane, typ REP. Budujemy tylko nagłówek NS –
-         * nagłówek IP (adresy, TTL / hop limit, protokół 253) dokłada jądro.
-         * sendto() na adres nadawcy z recvfrom().
-         */
+        /* budujemy odpowiedź REP (te same id, seq i dane) i odsyłamy ją nadawcy */
         size_t reply_len = ns_build(reply, NS_TYPE_REP, id, seq, data, data_len);
         if (sendto(fd, reply, reply_len, 0, (struct sockaddr *)&peer, peer_len) < 0)
             perror("sendto");

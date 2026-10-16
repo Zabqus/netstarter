@@ -2,20 +2,15 @@
  * raw_client.c – klient echo na gniazdach surowych (warstwa 3), protokół NS (IP proto 253).
  *
  * Uruchomienie (wymaga CAP_NET_RAW):
- *   sudo ./build/raw_client [-4|-6] -h <host> [-m "wiadomość"]     (domyślnie IPv4)
- *   ./build/raw_client ...                                         (po sudo scripts/setcap.sh)
- *
- *   bez -m : każda linia ze stdin to osobne żądanie z kolejnym seq (Ctrl+D kończy),
- *   z -m   : jedno żądanie, wypisanie odpowiedzi i RTT, koniec
- *            (kod wyjścia 1, gdy odpowiedź nie przyszła).
+ *   sudo ./build/raw_client [-4|-6] -h <host> [-m "wiadomość"]   albo bez sudo po scripts/setcap.sh
+ *   -m – jedno żądanie i koniec (kod 1 przy braku odpowiedzi),
+ *   bez -m – każda linia ze stdin to osobne żądanie (Ctrl+D kończy).
  *
  * Sekwencja wywołań:
  *   socket(AF_INET/AF_INET6, SOCK_RAW, 253) → getaddrinfo → setsockopt(SO_RCVTIMEO) →
- *   [budowa nagłówka NS + checksum] → sendto → recvfrom (aż przyjdzie pasujący REP) → close
+ *   [budowa pakietu NS] → sendto → recvfrom (aż przyjdzie nasz REP) → close
  *
- * Każde gniazdo surowe protokołu 253 dostaje kopię każdego pakietu tego protokołu.
- * Przy teście na jednej maszynie klient zobaczy więc także własne REQ – dlatego
- * akceptujemy tylko pakiet typu REP z naszym id i seq, resztę pomijamy.
+ * Gniazdo surowe widzi każdy pakiet protokołu 253, więc przyjmujemy tylko REP z naszym id i seq.
  */
 #include <errno.h>       /* errno, EAGAIN, EWOULDBLOCK, EINTR */
 #include <netdb.h>       /* getaddrinfo, freeaddrinfo, gai_strerror */
@@ -45,7 +40,7 @@ static void usage(const char *prog)
     exit(EXIT_FAILURE);
 }
 
-/* Ile milisekund minęło od chwili start (zegar monotoniczny – nie skacze przy zmianie czasu). */
+/* Ile milisekund minęło od start (zegar monotoniczny). */
 static double elapsed_ms(const struct timespec *start)
 {
     struct timespec now;
@@ -54,10 +49,7 @@ static double elapsed_ms(const struct timespec *start)
          + (double)(now.tv_nsec - start->tv_nsec) / 1e6;
 }
 
-/*
- * Wysyła jedno żądanie REQ i czeka na pasującą odpowiedź REP.
- * Zwraca 0 – odpowiedź przyszła, -1 – timeout lub błąd.
- */
+/* Wysyła żądanie REQ i czeka na pasującą odpowiedź REP. 0 – przyszła, -1 – timeout/błąd. */
 static int ping_once(int fd, int family, const struct sockaddr *dst, socklen_t dst_len,
                      uint16_t id, uint16_t seq, const char *text, size_t len)
 {
@@ -66,18 +58,15 @@ static int ping_once(int fd, int family, const struct sockaddr *dst, socklen_t d
     char from_str[ADDR_STR_LEN];
 
     if (len > NS_MAX_DATA)
-        len = NS_MAX_DATA;   /* za długa wiadomość – obcinamy */
+        len = NS_MAX_DATA;   /* za długa – obcinamy */
 
-    /* Sami budujemy nagłówek NS i liczymy sumę kontrolną (ns_build w raw_proto.h). */
+    // budujemy pakiet NS: nagłówek + dane + suma kontrolna
     size_t pkt_len = ns_build(pkt, NS_TYPE_REQ, id, seq, text, len);
 
     struct timespec start;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
-    /*
-     * sendto(): wysyłamy sam pakiet NS – jądro dokleja przed nim nagłówek IP
-     * (adres źródłowy wg routingu, TTL / hop limit, protokół 253; w IPv4 też sumę IP).
-     */
+    // wysyłamy pakiet NS – nagłówek IP (adresy, TTL, protokół 253) dokłada jądro
     if (sendto(fd, pkt, pkt_len, 0, dst, dst_len) < 0) {
         perror("sendto");
         return -1;
@@ -88,7 +77,7 @@ static int ping_once(int fd, int family, const struct sockaddr *dst, socklen_t d
         struct sockaddr_storage from;
         socklen_t from_len = sizeof from;
 
-        /* recvfrom(): czeka max TIMEOUT_SECONDS (SO_RCVTIMEO), potem EAGAIN. */
+        /* czekamy na pakiet maks. TIMEOUT_SECONDS */
         ssize_t n = recvfrom(fd, buf, sizeof buf, 0, (struct sockaddr *)&from, &from_len);
         if (n < 0) {
             if (errno == EINTR)
@@ -102,20 +91,17 @@ static int ping_once(int fd, int family, const struct sockaddr *dst, socklen_t d
         }
         double rtt = elapsed_ms(&start);
 
-        /* IPv4: pomijamy nagłówek IP; IPv6: dane NS od początku bufora. */
+        // szukamy pakietu NS (IPv4: za nagłówkiem IP, IPv6: od początku)
         size_t ns_len;
         const uint8_t *ns = ns_locate(family, buf, (size_t)n, &ns_len);
         const struct ns_hdr *h = (const struct ns_hdr *)ns;
 
-        /* Nasz pakiet = poprawna odpowiedź REP z naszym id i seq (nie własne REQ, nie cudze). */
+        // nasz pakiet = poprawny REP z naszym id i seq
         int ours = ns != NULL && ns_validate(ns, ns_len) == NULL
                    && h->type == NS_TYPE_REP && ntohs(h->id) == id && ntohs(h->seq) == seq;
 
         if (!ours) {
-            /*
-             * Obcy pakiet – pomijamy. SO_RCVTIMEO liczy się od nowa przy każdym
-             * recvfrom(), więc pilnujemy też łącznego czasu oczekiwania.
-             */
+            /* obcy pakiet – pomijamy, ale pilnujemy łącznego czasu czekania */
             if (rtt > TIMEOUT_SECONDS * 1000.0) {
                 printf("[RAW][cli] brak odpowiedzi (timeout %d s)\n", TIMEOUT_SECONDS);
                 return -1;
@@ -131,7 +117,7 @@ static int ping_once(int fd, int family, const struct sockaddr *dst, socklen_t d
                from_str, (unsigned)id, (unsigned)seq,
                (unsigned)data_len, (int)data_len, data, rtt);
 
-        /* TTL znamy tylko w IPv4 – tam nagłówek IP jest w buforze. */
+        /* TTL znamy tylko w IPv4 – tam nagłówek IP jest w buforze */
         if (family == AF_INET)
             printf("[RAW][cli]   IPv4: ttl=%u\n", (unsigned)((const struct iphdr *)buf)->ttl);
         return 0;
@@ -160,13 +146,10 @@ int main(int argc, char *argv[])
 
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    /* Gniazdo otwieramy najpierw – bez uprawnień od razu czytelny komunikat. */
+    /* tworzymy gniazdo surowe (najpierw – bez uprawnień od razu komunikat) */
     int fd = ns_open_socket(family);
 
-    /*
-     * getaddrinfo() tylko do zamiany nazwy/adresu na sockaddr. Portu nie ma (NULL),
-     * SOCK_RAW + NS_PROTO, żeby dostać po jednym wpisie na adres.
-     */
+    /* zamieniamy nazwę/adres serwera na sockaddr (bez portu) */
     struct addrinfo hints;
     struct addrinfo *res;
     memset(&hints, 0, sizeof hints);
@@ -180,12 +163,12 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    /* SO_RCVTIMEO: maksymalny czas blokowania recvfrom(). */
+    /* ustawiamy timeout odbioru */
     struct timeval tv = { .tv_sec = TIMEOUT_SECONDS, .tv_usec = 0 };
     if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) < 0)
         die("setsockopt(SO_RCVTIMEO)");
 
-    /* Identyfikator klienta – jak w ping: PID, obcięty do 16 bitów. */
+    /* identyfikator klienta – PID obcięty do 16 bitów (jak w ping) */
     uint16_t id = (uint16_t)(getpid() & 0xFFFF);
     uint16_t seq = 1;
 
@@ -203,7 +186,7 @@ int main(int argc, char *argv[])
         printf("[RAW][cli] wpisuj linie, Ctrl+D kończy\n");
         char line[NS_MAX_DATA + 2];
         while (fgets(line, sizeof line, stdin) != NULL) {
-            /* Wysyłamy linię bez końcowego '\n'. */
+            /* wysyłamy linię bez końcowego '\n' */
             ping_once(fd, family, res->ai_addr, res->ai_addrlen,
                       id, seq, line, text_len(line, strlen(line)));
             seq++;

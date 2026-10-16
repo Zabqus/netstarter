@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# setcap.sh – nadaje binarkom capabilities, żeby działały jako zwykły użytkownik (etap 4.5).
+# setcap.sh – nadaje binarkom capabilities, żeby działały bez roota (etap 4.5).
 #
-# Użycie:  sudo scripts/setcap.sh
+# Użycie:  sudo scripts/setcap.sh   (po KAŻDYM buildzie – nowy plik binarki nie ma capabilities)
 #
-# Uruchamiać PO KAŻDYM buildzie: kompilator tworzy plik binarki od nowa, a capabilities
-# są zapisane w atrybucie rozszerzonym pliku (xattr security.capability) – nowy plik ich nie ma.
-#
-#   cap_net_raw            – tworzenie gniazd surowych (raw_server, raw_client)
+#   cap_net_raw            – gniazda surowe (raw_server, raw_client)
 #   cap_net_bind_service   – bind() na port < 1024 (tcp_server, udp_server)
-#   +ep                    – dodaj do zbiorów Effective (aktywne od startu) i Permitted (dozwolone)
+#   +ep                    – aktywne od startu (Effective) i dozwolone (Permitted)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -19,7 +16,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# Nadaje capability jednej binarce; brakująca binarka = błąd (najpierw scripts/build.sh).
+# nadaje capability jednej binarce
 give_cap() {
     local cap="$1"
     local bin="$BUILD_DIR/$2"

@@ -1,8 +1,6 @@
 /*
- * net_common.h – wspólne funkcje pomocnicze dla wszystkich programów netstarter.
- *
- * Implementacja w net_common.c, kompilowana do biblioteki statycznej "netcommon",
- * z którą linkowany jest każdy klient i serwer.
+ * net_common.h – wspólne funkcje pomocnicze dla wszystkich programów.
+ * Implementacja w net_common.c (biblioteka statyczna "netcommon").
  */
 #ifndef NET_COMMON_H
 #define NET_COMMON_H
@@ -11,59 +9,28 @@
 #include <stdint.h>      /* uint16_t */
 #include <sys/socket.h>  /* struct sockaddr, socklen_t */
 
-/*
- * Rozmiar bufora na tekst "host:port" / "[host]:port".
- * Najdłuższy adres IPv6 to 45 znaków (INET6_ADDRSTRLEN = 46 z '\0'),
- * do tego nawiasy, dwukropek i port (max 5 cyfr) – 64 B wystarcza z zapasem.
- */
+/* Bufor na tekst "host:port" / "[host]:port" – najdłuższy adres IPv6 ma 45 znaków. */
 #define ADDR_STR_LEN 64
 
-/*
- * Wypisuje komunikat błędu (perror – dokleja opis z errno) i kończy program.
- * Używać tylko po wywołaniach, które ustawiają errno (socket, bind, ...).
- * _Noreturn mówi kompilatorowi, że funkcja nigdy nie wraca.
- */
+/* Wypisuje błąd (perror) i kończy program. */
 _Noreturn void die(const char *msg);
 
-/*
- * Zamienia adres gniazda (IPv4 lub IPv6) na czytelny tekst:
- *   IPv4: "192.168.1.202:43122"
- *   IPv6: "[fd00:10::202]:43122"
- * Wynik zapisuje do buf (rozmiar n, najlepiej ADDR_STR_LEN) i zwraca buf,
- * żeby można było użyć funkcji bezpośrednio w printf.
- */
+/* Adres gniazda jako tekst: "192.168.1.202:43122" albo "[fd00:10::202]:43122". */
 const char *addr_to_str(const struct sockaddr *sa, socklen_t len, char *buf, size_t n);
 
-/*
- * Jak addr_to_str(), ale tylko sam adres, bez portu ("192.168.1.202", "fd00:10::202").
- * Dla gniazd surowych – warstwa 3 nie ma pojęcia portu.
- */
+/* Sam adres, bez portu – dla gniazd surowych (warstwa 3 nie ma portów). */
 const char *addr_to_host(const struct sockaddr *sa, socklen_t len, char *buf, size_t n);
 
-/*
- * Wysyła cały bufor przez gniazdo TCP. send() może wysłać mniej bajtów,
- * niż prosiliśmy (częściowy zapis), więc ponawiamy aż do skutku.
- * Zwraca 0 gdy wysłano wszystko, -1 przy błędzie (errno ustawione).
- */
+/* Wysyła cały bufor przez TCP (send() może wysłać tylko część). 0 – OK, -1 – błąd. */
 int send_all(int fd, const void *buf, size_t len);
 
-/*
- * Suma kontrolna Internetu (RFC 1071) – ta sama, której używają IP, ICMP, TCP, UDP.
- * Zwraca wynik w porządku bajtów HOSTA – przed wpisaniem do nagłówka użyj htons().
- * Weryfikacja: suma policzona po całym pakiecie (razem z polem checksum) daje 0.
- */
+/* Suma kontrolna Internetu (RFC 1071). Wynik w porządku hosta – do nagłówka przez htons(). */
 uint16_t inet_checksum(const void *data, size_t len);
 
-/*
- * Zamienia flagę wiersza poleceń na rodzinę adresów:
- *   "-4" -> AF_INET, "-6" -> AF_INET6, cokolwiek innego -> -1.
- */
+/* "-4" → AF_INET, "-6" → AF_INET6, inne → -1. */
 int parse_family(const char *flag);
 
-/*
- * Zwraca długość tekstu w buf (n bajtów) bez końcowych znaków '\n' i '\r'.
- * Tylko do ładnego logowania: printf("%.*s", (int)text_len(buf, n), buf).
- */
+/* Długość tekstu bez końcowych '\n' / '\r' – do ładnego logowania. */
 size_t text_len(const char *buf, size_t n);
 
 #endif /* NET_COMMON_H */

@@ -1,45 +1,35 @@
 #!/usr/sbin/nft -f
 #
-# netstarter.nft - podstawowe reguly firewalla dla serwera (etap 5.0).
-#
+# netstarter.nft - reguly firewalla na serwerze (etap 5.0).
 # Ladowanie:  sudo scripts/firewall.sh load
 #
-# Wlasna tabela "inet netstarter" - NIE ruszamy domyslnej tabeli systemu (inet filter).
-# Rodzina "inet" = jedna tabela dla IPv4 i IPv6 naraz.
+# Wlasna tabela "inet netstarter" (IPv4 + IPv6) - domyslnej tabeli systemu nie ruszamy.
 #
-#   TCP 5000   (tcp_server)  -> accept  (przechodzi)
-#   UDP 5001   (udp_server)  -> drop    (pokaz blokady - klient dostaje timeout)
-#   proto 253  (raw_server)  -> drop    (osobno IPv4 i IPv6, zeby miec osobne liczniki)
+#   TCP 5000   (tcp_server)  -> accept
+#   UDP 5001   (udp_server)  -> drop
+#   proto 253  (raw_server)  -> drop
 #
-# Kazda regula ma "counter" - "nft list table inet netstarter" pokazuje, ile pakietow
-# i bajtow w nia trafilo.
+# "counter" przy kazdej regule liczy pakiety, ktore w nia trafily.
 
-# Trik na ponowne ladowanie: utworz tabele (jesli nie ma) i od razu ja usun -
-# dzieki temu kolejne "load" nie dubluje regul, a liczniki startuja od zera.
-# Caly plik wykonuje sie atomowo (wszystko albo nic).
+# tworzymy tabele (jesli jej nie ma) i od razu usuwamy - ponowne load nie dubluje regul
 table inet netstarter
 delete table inet netstarter
 
 table inet netstarter {
     chain input {
-        # Lancuch bazowy podpiety pod hook "input": pakiety adresowane DO tej maszyny,
-        # juz po decyzji routingu, przed dostarczeniem do gniazda (takze surowego).
-        # priority filter (= 0) - standardowy priorytet filtrowania.
-        # policy accept - wszystko, czego nie dotycza nasze reguly, przechodzi dalej
-        # (SSH, ICMP, ruch systemu) - blokujemy tylko wybrany ruch netstarter.
+        # pakiety przychodzace do tej maszyny; reszta ruchu (policy accept) przechodzi
         type filter hook input priority filter; policy accept;
 
-        # TCP echo - jawnie przepuszczamy (licznik pokaze, ze ruch tu trafil).
+        # TCP echo - przepuszczamy
         tcp dport 5000 counter accept comment "netstarter: TCP 5000 accept"
 
-        # UDP echo - po cichu wyrzucamy (bez ICMP) - klient czeka i dostaje timeout.
+        # UDP echo - wyrzucamy po cichu (klient dostaje timeout)
         udp dport 5001 counter drop comment "netstarter: UDP 5001 drop"
 
-        # Wlasny protokol warstwy 3. "ip protocol" dopasowuje tylko IPv4.
+        # wlasny protokol 253 po IPv4
         ip protocol 253 counter drop comment "netstarter: IPv4 proto 253 drop"
 
-        # IPv6: "meta l4proto" to protokol warstwy 4 PO naglowkach rozszerzen IPv6.
-        # "meta nfproto ipv6" zaweza regule do IPv6 (IPv4 zalatwila regula wyzej).
+        # wlasny protokol 253 po IPv6 (l4proto - za naglowkami rozszerzen IPv6)
         meta nfproto ipv6 meta l4proto 253 counter drop comment "netstarter: IPv6 proto 253 drop"
     }
 }

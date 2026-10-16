@@ -1,21 +1,15 @@
 /*
  * udp_server.c – serwer echo UDP.
  *
- * Uruchomienie:
- *   ./build/udp_server [-4|-6] [-p <port>]    (domyślnie: IPv4, port 5001)
- *
- * Test bez klienta:  nc -u 127.0.0.1 5001   /   nc -u -6 ::1 5001
- *                    (wpisana linia wraca z powrotem)
+ * Uruchomienie:  ./build/udp_server [-4|-6] [-p <port>]    (domyślnie IPv4, port 5001)
+ * Test bez klienta:  nc -u 127.0.0.1 5001
  *
  * Sekwencja wywołań:
- *   getaddrinfo → socket → setsockopt(SO_REUSEADDR) →
- *   [tylko IPv6: setsockopt(IPV6_V6ONLY)] → bind →
- *   recvfrom / sendto (pętla) → close
+ *   getaddrinfo → socket → setsockopt(SO_REUSEADDR) → [IPv6: setsockopt(IPV6_V6ONLY)] →
+ *   bind → recvfrom / sendto (pętla) → close
  *
- * UDP jest bezpołączeniowy: nie ma listen() ani accept(). Jedno gniazdo obsługuje
- * wszystkich klientów – adres nadawcy dostajemy przy każdym datagramie z recvfrom()
- * i na ten adres odsyłamy odpowiedź przez sendto().
- * Ctrl+C (SIGINT) kończy serwer i zamyka gniazdo.
+ * UDP jest bezpołączeniowy – nie ma listen() ani accept(). Jedno gniazdo obsługuje
+ * wszystkich klientów, adres nadawcy przychodzi z każdym datagramem. Ctrl+C kończy serwer.
  */
 #include <errno.h>       /* errno, EINTR */
 #include <netdb.h>       /* getaddrinfo, freeaddrinfo, gai_strerror */
@@ -30,9 +24,9 @@
 #include "net_common.h"
 
 #define DEFAULT_PORT "5001"
-#define BUF_SIZE     1500   /* typowe MTU Ethernetu – większe datagramy i tak są rzadkie */
+#define BUF_SIZE     1500   /* typowe MTU Ethernetu */
 
-/* Jedyna zmienna globalna: flaga ustawiana przez obsługę SIGINT. */
+/* Jedyna zmienna globalna – flaga ustawiana po Ctrl+C. */
 static volatile sig_atomic_t g_stop = 0;
 
 static void on_sigint(int sig)
@@ -50,13 +44,13 @@ static void usage(const char *prog)
     exit(EXIT_FAILURE);
 }
 
-/* Tworzy gniazdo UDP zbindowane na wszystkich adresach danej rodziny i zadanym porcie. */
+/* Tworzy gniazdo UDP przypisane do wszystkich adresów i zadanego portu. */
 static int create_udp_socket(int family, const char *port)
 {
     struct addrinfo hints;
     struct addrinfo *res;
 
-    /* Tak samo jak w TCP, tylko SOCK_DGRAM zamiast SOCK_STREAM. */
+    // przygotowujemy adres serwera – jak w TCP, tylko SOCK_DGRAM
     memset(&hints, 0, sizeof hints);
     hints.ai_family = family;
     hints.ai_socktype = SOCK_DGRAM;           /* UDP */
@@ -68,30 +62,23 @@ static int create_udp_socket(int family, const char *port)
         exit(EXIT_FAILURE);
     }
 
-    /* socket(): gniazdo datagramowe. */
+    // tworzymy gniazdo UDP
     int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (fd < 0)
         die("socket");
 
-    /*
-     * SO_REUSEADDR: UDP nie ma stanu TIME_WAIT, ale ustawiamy dla spójności z TCP –
-     * pozwala zbindować port, nawet jeśli coś go jeszcze chwilowo trzyma.
-     */
+    // ponowne użycie portu
     int on = 1;
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on) < 0)
         die("setsockopt(SO_REUSEADDR)");
 
-    /*
-     * IPV6_V6ONLY = 1: gniazdo IPv6 odbiera wyłącznie datagramy IPv6
-     * (bez tego dostawałoby też IPv4 jako adresy ::ffff:a.b.c.d).
-     * Szczegółowy opis w tcp_server.c. Musi być ustawione przed bind().
-     */
+    /* IPv6: gniazdo przyjmuje tylko IPv6 */
     if (res->ai_family == AF_INET6) {
         if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof on) < 0)
             die("setsockopt(IPV6_V6ONLY)");
     }
 
-    /* bind(): od teraz jądro kieruje do tego gniazda datagramy na nasz port. */
+    // przypisujemy adres i port
     if (bind(fd, res->ai_addr, res->ai_addrlen) < 0)
         die("bind");
 
@@ -105,7 +92,7 @@ int main(int argc, char *argv[])
     const char *port = DEFAULT_PORT;
 
     for (int i = 1; i < argc; i++) {
-        int f = parse_family(argv[i]);   /* "-4" → AF_INET, "-6" → AF_INET6, inne → -1 */
+        int f = parse_family(argv[i]);
         if (f != -1)
             family = f;
         else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc)
@@ -116,7 +103,7 @@ int main(int argc, char *argv[])
 
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    /* Ctrl+C bez SA_RESTART – recvfrom() zwróci -1 z EINTR i pętla się zakończy. */
+    /* Ctrl+C: bez SA_RESTART, żeby recvfrom() się przerwało */
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_sigint;
@@ -140,12 +127,7 @@ int main(int argc, char *argv[])
         struct sockaddr_storage peer;
         socklen_t peer_len = sizeof peer;
 
-        /*
-         * recvfrom(): czeka na JEDEN datagram i zapisuje adres nadawcy do peer.
-         * UDP zachowuje granice wiadomości: jeden sendto() u klienta = jeden
-         * recvfrom() tutaj (w przeciwieństwie do strumienia TCP).
-         * Jeśli datagram jest większy niż bufor, nadmiar jest po cichu ucinany.
-         */
+        // odbieramy jeden datagram i zapamiętujemy adres nadawcy
         ssize_t n = recvfrom(fd, buf, sizeof buf, 0, (struct sockaddr *)&peer, &peer_len);
         if (n < 0) {
             if (errno == EINTR)
@@ -158,10 +140,7 @@ int main(int argc, char *argv[])
         printf("[UDP][srv] %zd B od %s: \"%.*s\"\n",
                n, addr, (int)text_len(buf, (size_t)n), buf);
 
-        /*
-         * sendto(): odsyła datagram pod adres nadawcy. Datagram wysyła się w całości
-         * albo wcale – nie ma częściowych zapisów, więc send_all() nie jest potrzebne.
-         */
+        // odsyłamy datagram na adres nadawcy (calosc albo wcale)
         if (sendto(fd, buf, (size_t)n, 0, (struct sockaddr *)&peer, peer_len) < 0)
             perror("sendto");
     }

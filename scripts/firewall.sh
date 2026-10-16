@@ -5,11 +5,11 @@
 #          sudo scripts/firewall.sh unload
 #          sudo scripts/firewall.sh status
 #
-#   load     – ładuje reguły z firewall/netstarter.nft (nft -f); ponowne load zeruje liczniki
-#   unload   – usuwa całą tabelę inet netstarter (nft delete table)
-#   status   – pokazuje reguły z licznikami (nft list table)
+#   load     – ładuje reguły z firewall/netstarter.nft (liczniki od zera)
+#   unload   – usuwa tabelę inet netstarter
+#   status   – pokazuje reguły z licznikami
 #
-# Skrypt dotyka WYŁĄCZNIE tabeli "inet netstarter" – reszta reguł systemu zostaje bez zmian.
+# Skrypt rusza tylko tabelę "inet netstarter" – reszta reguł systemu zostaje.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -27,7 +27,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# Czy tabela jest teraz załadowana? (nft list zwraca błąd, gdy jej nie ma)
+# czy tabela jest załadowana (nft list zwraca błąd, gdy jej nie ma)
 table_loaded() {
     nft list table "$FAMILY" "$TABLE" >/dev/null 2>&1
 }
