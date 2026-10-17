@@ -1,14 +1,5 @@
 /*
  * tcp_server.c – serwer echo TCP.
- *
- * Uruchomienie:  ./build/tcp_server [-4|-6] [-p <port>]    (domyślnie IPv4, port 5000)
- * Test bez klienta:  nc 127.0.0.1 5000
- *
- * Sekwencja wywołań:
- *   getaddrinfo → socket → setsockopt(SO_REUSEADDR) → [IPv6: setsockopt(IPV6_V6ONLY)] →
- *   bind → listen → accept (pętla) → recv / send_all → close
- *
- * Klienci obsługiwani są po kolei, jeden po drugim. Ctrl+C kończy serwer.
  */
 #include <errno.h>       /* errno, EINTR */
 #include <netdb.h>       /* getaddrinfo, freeaddrinfo, gai_strerror */

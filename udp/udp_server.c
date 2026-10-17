@@ -1,15 +1,5 @@
 /*
  * udp_server.c – serwer echo UDP.
- *
- * Uruchomienie:  ./build/udp_server [-4|-6] [-p <port>]    (domyślnie IPv4, port 5001)
- * Test bez klienta:  nc -u 127.0.0.1 5001
- *
- * Sekwencja wywołań:
- *   getaddrinfo → socket → setsockopt(SO_REUSEADDR) → [IPv6: setsockopt(IPV6_V6ONLY)] →
- *   bind → recvfrom / sendto (pętla) → close
- *
- * UDP jest bezpołączeniowy – nie ma listen() ani accept(). Jedno gniazdo obsługuje
- * wszystkich klientów, adres nadawcy przychodzi z każdym datagramem. Ctrl+C kończy serwer.
  */
 #include <errno.h>       /* errno, EINTR */
 #include <netdb.h>       /* getaddrinfo, freeaddrinfo, gai_strerror */

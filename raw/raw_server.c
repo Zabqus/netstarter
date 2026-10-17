@@ -1,15 +1,5 @@
 /*
  * raw_server.c – serwer echo na gniazdach surowych (warstwa 3), protokół NS (IP proto 253).
- *
- * Uruchomienie (wymaga CAP_NET_RAW):
- *   sudo ./build/raw_server [-4|-6]        albo bez sudo po scripts/setcap.sh
- *
- * Sekwencja wywołań:
- *   socket(AF_INET/AF_INET6, SOCK_RAW, 253) → recvfrom (pętla) →
- *   [sprawdzenie pakietu NS] → sendto (odpowiedź REP) → close
- *
- * Nie ma bind(), listen() ani portów – gniazdo dostaje każdy pakiet z protokołem 253.
- * IPv4: recvfrom() zwraca pakiet z nagłówkiem IP, IPv6: bez nagłówka (ns_locate()).
  */
 #include <errno.h>       /* errno, EINTR */
 #include <signal.h>      /* sigaction, sig_atomic_t */

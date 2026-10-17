@@ -1,16 +1,5 @@
 /*
  * raw_client.c – klient echo na gniazdach surowych (warstwa 3), protokół NS (IP proto 253).
- *
- * Uruchomienie (wymaga CAP_NET_RAW):
- *   sudo ./build/raw_client [-4|-6] -h <host> [-m "wiadomość"]   albo bez sudo po scripts/setcap.sh
- *   -m – jedno żądanie i koniec (kod 1 przy braku odpowiedzi),
- *   bez -m – każda linia ze stdin to osobne żądanie (Ctrl+D kończy).
- *
- * Sekwencja wywołań:
- *   socket(AF_INET/AF_INET6, SOCK_RAW, 253) → getaddrinfo → setsockopt(SO_RCVTIMEO) →
- *   [budowa pakietu NS] → sendto → recvfrom (aż przyjdzie nasz REP) → close
- *
- * Gniazdo surowe widzi każdy pakiet protokołu 253, więc przyjmujemy tylko REP z naszym id i seq.
  */
 #include <errno.h>       /* errno, EAGAIN, EWOULDBLOCK, EINTR */
 #include <netdb.h>       /* getaddrinfo, freeaddrinfo, gai_strerror */

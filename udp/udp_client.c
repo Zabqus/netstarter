@@ -1,15 +1,5 @@
 /*
  * udp_client.c – klient echo UDP z timeoutem odpowiedzi.
- *
- * Uruchomienie:  ./build/udp_client [-4|-6] -h <host> [-p <port>] [-m "wiadomość"]
- *   bez -4/-6 – dowolna wersja IP, -m – jeden datagram i koniec (kod 1 przy timeoucie),
- *   bez -m    – każda linia ze stdin to osobny datagram (Ctrl+D kończy).
- *
- * Sekwencja wywołań:
- *   getaddrinfo → socket → setsockopt(SO_RCVTIMEO) → sendto / recvfrom → close
- *
- * UDP nie potwierdza dostarczenia – gdy datagram zginie (np. przez firewall),
- * po 2 s wypisujemy "brak odpowiedzi (timeout)" zamiast czekać w nieskończoność.
  */
 #include <errno.h>       /* errno, EAGAIN, EWOULDBLOCK */
 #include <netdb.h>       /* getaddrinfo, freeaddrinfo, gai_strerror */

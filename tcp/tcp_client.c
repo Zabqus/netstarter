@@ -1,15 +1,5 @@
 /*
  * tcp_client.c – klient echo TCP.
- *
- * Uruchomienie:  ./build/tcp_client [-4|-6] -h <host> [-p <port>] [-m "wiadomość"]
- *   bez -4/-6 – dowolna wersja IP, -m – jedna wiadomość i koniec,
- *   bez -m    – wysyła kolejne linie ze stdin (Ctrl+D kończy).
- * Przykłady:  -h 192.168.1.201   -h fd00:10::201   -h ::1
- *
- * Sekwencja wywołań:
- *   getaddrinfo → socket → connect → send_all / recv → close
- *
- * Klient nie robi bind() – adres i port źródłowy dobiera jądro przy connect().
  */
 #include <netdb.h>       /* getaddrinfo, freeaddrinfo, gai_strerror */
 #include <stdio.h>

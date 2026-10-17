@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-# setcap.sh – nadaje binarkom capabilities, żeby działały bez roota (etap 4.5).
-#
-# Użycie:  sudo scripts/setcap.sh   (po KAŻDYM buildzie – nowy plik binarki nie ma capabilities)
-#
-#   cap_net_raw            – gniazda surowe (raw_server, raw_client)
-#   cap_net_bind_service   – bind() na port < 1024 (tcp_server, udp_server)
-#   +ep                    – aktywne od startu (Effective) i dozwolone (Permitted)
+# setcap.sh – nadaje binarkom capabilities, żeby działały bez roota
+
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

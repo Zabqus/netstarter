@@ -4,16 +4,6 @@
  * Protokół 253 jest zarezerwowany do eksperymentów (RFC 3692) – jądro go nie obsługuje,
  * więc nagłówek, sumę kontrolną i dopasowanie odpowiedzi robimy sami.
  *
- * Pakiet NS (za nagłówkiem IP), pola w network byte order:
- *
- *   +---------------+---------------+---------------+---------------+
- *   |          magic = "NS"         |    version    |     type      |
- *   +---------------+---------------+---------------+---------------+
- *   |              id               |              seq              |
- *   +---------------+---------------+---------------+---------------+
- *   |            length             |           checksum            |
- *   +---------------+---------------+---------------+---------------+
- *   |                      dane (length bajtów) ...                 |
  */
 #ifndef RAW_PROTO_H
 #define RAW_PROTO_H
